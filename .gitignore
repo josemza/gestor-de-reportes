@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.pytest_cache/
+.mypy_cache/
+
+# Entornos
+.venv/
+venv/
+env/
+ENV/
+*.egg-info/
+
+# Variables y secretos
+.env
+.env.*
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs y salidas locales
+logs/
+test/
+*.log
+*.jsonl
+
+# Zip/exports generados
+*.zip
+*.csv
+
+#
+app/input/
+app/output/
+app/conexion/
+runtime/worker_log/
+test/
+arquitectura.txt

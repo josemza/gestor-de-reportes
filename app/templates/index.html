@@ -1,0 +1,588 @@
+<!doctype html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Centro de Reportes</title>
+  <link rel="stylesheet" href="/static/css/app.css" />
+</head>
+
+<body>
+  <!-- VIEW: LOGIN -->
+  <div id="login-view" class="login-view">
+    <div class="login-card">
+      <div class="login-brand">
+        <div class="login-logo">R</div>
+        <h1>Centro de Reportes</h1>
+        <p>Inicia sesión para continuar</p>
+      </div>
+
+      <form id="formLogin" class="login-form">
+        <div class="form-row">
+          <label for="loginUsername">Usuario</label>
+          <input id="loginUsername" type="text" autocomplete="username" placeholder="ej. usuario" required />
+        </div>
+        <div class="form-row">
+          <label for="loginPassword">Contraseña</label>
+          <input id="loginPassword" type="password" autocomplete="current-password" placeholder="••••••••" required />
+        </div>
+
+        <div class="error" id="loginError" style="display:none;"></div>
+
+        <button type="submit" class="btn btn--primary btn--block" id="btnDoLogin">
+          Entrar
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- VIEW: APP -->
+  <div id="app-view" class="app-shell" style="display:none;">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand__logo">R</div>
+        <div class="brand__text">
+          <h1>Centro de Reportes</h1>
+          <p>Gestión de solicitudes</p>
+        </div>
+        <button id="btnSidebarToggle" class="btn btn--ghost btn--icon sidebar-toggle" title="Colapsar/expandir menú">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="15 18 9 12 15 6"></polyline>
+          </svg>
+        </button>
+      </div>
+
+      <nav class="menu">
+        <button class="menu__item is-active" data-tab="tab-dashboard">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="7" height="7"></rect>
+            <rect x="14" y="3" width="7" height="7"></rect>
+            <rect x="14" y="14" width="7" height="7"></rect>
+            <rect x="3" y="14" width="7" height="7"></rect>
+          </svg>
+          <span class="menu__label">Dashboard</span>
+        </button>
+        <button class="menu__item" data-tab="tab-detalle">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="16" x2="12" y2="12"></line>
+            <line x1="12" y1="8" x2="12.01" y2="8"></line>
+          </svg>
+          <span class="menu__label">Detalle</span>
+        </button>
+        <button class="menu__item" data-tab="tab-admin-rutas">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+            <polyline points="9 22 9 12 15 12 15 22"></polyline>
+          </svg>
+          <span class="menu__label">Admin Rutas</span>
+        </button>
+        <button class="menu__item" data-tab="tab-admin-reportes">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M4 4h16v16H4z"></path>
+            <path d="M9 4v16"></path>
+            <path d="M4 10h16"></path>
+          </svg>
+          <span class="menu__label">Admin Reportes</span>
+        </button>
+        <button class="menu__item" data-tab="tab-admin-equipos">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="7" cy="8" r="3"></circle>
+            <circle cx="17" cy="8" r="3"></circle>
+            <path d="M2 20a5 5 0 0 1 10 0"></path>
+            <path d="M12 20a5 5 0 0 1 10 0"></path>
+          </svg>
+          <span class="menu__label">Admin Equipos</span>
+        </button>
+        <button class="menu__item" data-tab="tab-usuarios">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+            <circle cx="8.5" cy="7" r="4"></circle>
+            <path d="M20 8v6"></path>
+            <path d="M23 11h-6"></path>
+          </svg>
+          <span class="menu__label">Usuarios</span>
+        </button>
+      </nav>
+
+      <div class="sidebar__meta">
+        <p class="muted">API:</p>
+        <p id="apiBaseLabel" class="mono"></p>
+        <div id="healthBadge" class="badge badge--neutral">Verificando...</div>
+
+        <div class="user-mini-profile">
+          <div id="authUser" class="user-name">-</div>
+          <button id="btnLogout" class="btn btn--ghost btn--icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+              <polyline points="16 17 21 12 16 7"></polyline>
+              <line x1="21" y1="12" x2="9" y2="12"></line>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h2>Panel operativo</h2>
+          <p class="muted">Gestión integral de reportes</p>
+        </div>
+        <div class="topbar__actions">
+          <button id="btnOpenNuevaModal" class="btn btn--primary text-sm">Nueva solicitud</button>
+          <button id="btnRefreshAll" class="btn btn--ghost text-sm">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="23 4 23 10 17 10"></polyline>
+              <polyline points="1 20 1 14 7 14"></polyline>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+            </svg>
+            Actualizar
+          </button>
+        </div>
+      </header>
+
+      <section id="alerts"></section>
+
+      <!-- TAB: DASHBOARD (Merged Nueva + Mis) -->
+      <section id="tab-dashboard" class="tab is-active dashboard-grid">
+        <div class="dashboard-col-right">
+          <div class="card card--full-height">
+            <div class="card__header card__header--between">
+              <h3>Monitoreo</h3>
+              <div class="inline-controls">
+                <label class="switch text-sm">
+                  <input type="checkbox" id="autoRefresh" checked />
+                  <span>Auto (5s)</span>
+                </label>
+
+                <div class="filter-row">
+                  <input id="fUsuario" type="text" placeholder="Usuario" class="input-sm" />
+                  <select id="fEstado" class="input-sm">
+                    <option value="">Estado: Todos</option>
+                    <option value="EN_COLA">En Cola</option>
+                    <option value="EJECUTANDO">Ejecutando</option>
+                    <option value="OK">OK</option>
+                    <option value="ERROR">Error</option>
+                  </select>
+                  <button id="btnBuscarMis" class="btn btn--ghost btn--sm btn--icon" title="Buscar">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <circle cx="11" cy="11" r="8"></circle>
+                      <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="table-wrap table-wrap--scroll">
+              <table class="table table--compact" id="tablaMis">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Reporte</th>
+                    <th>Estado</th>
+                    <th style="width:80px">Progreso</th>
+                    <th>Mensaje</th>
+                    <th>Hora</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="tbodyMis">
+                  <tr>
+                    <td colspan="7" class="table-empty">Cargando...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB: DETALLE -->
+      <section id="tab-detalle" class="tab">
+        <div class="card">
+          <div class="card__header card__header--between">
+            <div>
+              <h3>Detalle de solicitud</h3>
+              <p class="muted">Traza completa de eventos</p>
+            </div>
+            <div class="inline-controls">
+              <button class="btn btn--ghost btn--sm"
+                onclick="document.querySelector('[data-tab=\'tab-dashboard\']').click()">
+                &larr; Volver al Dashboard
+              </button>
+            </div>
+          </div>
+
+          <div class="inline-controls mb-4">
+            <input id="detalleRequestId" type="text" placeholder="REQ_..." style="max-width:200px" />
+            <button id="btnCargarDetalle" class="btn btn--primary btn--sm">Cargar</button>
+          </div>
+
+          <div id="detalleResumen" class="detail-grid">
+            <div class="result-empty">Selecciona una solicitud.</div>
+          </div>
+
+          <h4 class="section-title mt-6">Eventos</h4>
+          <div id="detalleEventos" class="timeline">
+            <div class="result-empty">No hay eventos.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB: ADMIN-->
+      <section id="tab-admin-rutas" class="tab">
+        <div class="card">
+          <div class="card__header">
+            <h3>Administración de rutas permitidas</h3>
+            <p class="muted">Configura carpetas permitidas por reporte.</p>
+          </div>
+
+          <div class="form-grid">
+            <div class="field">
+              <label for="adminReporte">Reporte</label>
+              <select id="adminReporte">
+                <option value="">Seleccione un reporte</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <div>&nbsp;</div>
+              <button type="button" id="btnAdminCargar" class="btn btn--ghost btn--inline">
+                Cargar rutas
+              </button>
+            </div>
+
+            <div class="field field--full">
+              <label for="adminRutaNueva">Nueva ruta base (UNC/local)</label>
+              <div class="input-row">
+                <input id="adminRutaNueva" type="text" placeholder="\\pps-nas\Reportes\Input\Ventas" />
+                <button type="button" id="btnAdminAgregar" class="btn btn--primary btn--inline">
+                  Agregar
+                </button>
+              </div>
+              <small class="hint">Se registrará como activa (ACTIVO=1).</small>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card__header card__header--between">
+            <div>
+              <h3>Rutas registradas</h3>
+              <p class="muted">Activa/desactiva o edita ruta.</p>
+            </div>
+          </div>
+
+          <div class="table-wrap">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th style="width: 80px;">ID</th>
+                  <th>Ruta base</th>
+                  <th style="width: 120px;">Estado</th>
+                  <th style="width: 260px;">Acciones</th>
+                </tr>
+              </thead>
+              <tbody id="tbodyAdminRutas">
+                <tr>
+                  <td colspan="4" class="table-empty">Selecciona un reporte para ver rutas.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-admin-reportes" class="tab">
+        <div class="card">
+          <div class="card__header">
+            <h3>CRUD de reportes</h3>
+            <p class="muted">Crear, editar y desactivar reportes.</p>
+          </div>
+          <div class="form-grid">
+            <div class="field">
+              <label for="admRepCodigo">Código</label>
+              <input id="admRepCodigo" type="text" placeholder="RPT_XYZ" />
+            </div>
+            <div class="field">
+              <label for="admRepNombre">Nombre</label>
+              <input id="admRepNombre" type="text" placeholder="Reporte XYZ" />
+            </div>
+            <div class="field field--full">
+              <label for="admRepDescripcion">Descripción</label>
+              <textarea id="admRepDescripcion" rows="2" placeholder="Descripción del reporte"></textarea>
+            </div>
+            <div class="field">
+              <label for="admRepTipos">Tipos permitidos</label>
+              <input id="admRepTipos" type="text" placeholder="csv;xlsx" />
+            </div>
+            <div class="field">
+              <label for="admRepComando">Comando</label>
+              <input id="admRepComando" type="text" placeholder="python generar_reporte.py" />
+            </div>
+            <div class="field field--full">
+              <label for="admRepRutaOutput">Ruta output base</label>
+              <input id="admRepRutaOutput" type="text" placeholder="\\servidor\reportes\salida" />
+            </div>
+            <div class="field">
+              <label for="admRepReqInput">Requiere input</label>
+              <select id="admRepReqInput">
+                <option value="1">Sí</option>
+                <option value="0">No</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="admRepActivo">Activo</label>
+              <select id="admRepActivo">
+                <option value="1">Sí</option>
+                <option value="0">No</option>
+              </select>
+            </div>
+            <div class="field field--full">
+              <button type="button" id="btnAdmRepCrear" class="btn btn--primary btn--inline">Crear reporte</button>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card__header card__header--between">
+            <div>
+              <h3>Reportes registrados</h3>
+              <p class="muted">Edición rápida por fila.</p>
+            </div>
+            <button type="button" id="btnAdmRepRefrescar" class="btn btn--ghost btn--sm">Recargar</button>
+          </div>
+          <div class="table-wrap">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Código</th>
+                  <th>Nombre</th>
+                  <th>Ruta output</th>
+                  <th>Input</th>
+                  <th>Activo</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody id="tbodyAdminReportes">
+                <tr><td colspan="7" class="table-empty">Sin datos.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-admin-equipos" class="tab">
+        <div class="card">
+          <div class="card__header">
+            <h3>Maestro de equipos</h3>
+            <p class="muted">Crea y administra equipos disponibles.</p>
+          </div>
+          <div class="form-grid">
+            <div class="field">
+              <label for="admEquipoNombre">Nombre de equipo</label>
+              <input id="admEquipoNombre" type="text" placeholder="EQUIPO_OPERACIONES" />
+            </div>
+            <div class="field">
+              <label for="admEquipoActivo">Estado</label>
+              <select id="admEquipoActivo">
+                <option value="1">Activo</option>
+                <option value="0">Inactivo</option>
+              </select>
+            </div>
+            <div class="field field--full">
+              <button type="button" id="btnAdmEquipoCrear" class="btn btn--primary btn--inline">Crear equipo</button>
+              <button type="button" id="btnAdmEquipoRefrescar" class="btn btn--ghost btn--inline">Recargar equipos</button>
+            </div>
+          </div>
+          <div class="table-wrap mt-4">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Nombre</th>
+                  <th>Estado</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody id="tbodyEquipos">
+                <tr><td colspan="4" class="table-empty">Sin equipos.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card__header">
+            <h3>Asignación de equipos a usuarios</h3>
+            <p class="muted">Un usuario puede pertenecer a uno o más equipos.</p>
+          </div>
+          <div class="form-grid">
+            <div class="field">
+              <label for="admUsuarioEquipo">Usuario</label>
+              <select id="admUsuarioEquipo">
+                <option value="">Seleccione usuario</option>
+              </select>
+            </div>
+            <div class="field field--full">
+              <label for="admUsuarioEquiposFiltro">Buscar equipo</label>
+              <input id="admUsuarioEquiposFiltro" type="text" placeholder="Filtrar equipos..." />
+            </div>
+            <div class="field field--full">
+              <label>Equipos</label>
+              <div id="admUsuarioEquiposChecks" class="checks-grid"></div>
+            </div>
+            <div class="field field--full">
+              <button type="button" id="btnAdmUsuarioEquiposGuardar" class="btn btn--primary btn--inline">Guardar asignación</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card__header">
+            <h3>Asignación de equipos a reportes</h3>
+            <p class="muted">Solo usuarios de equipos suscritos verán estos reportes.</p>
+          </div>
+          <div class="form-grid">
+            <div class="field">
+              <label for="admReporteEquipo">Reporte</label>
+              <select id="admReporteEquipo">
+                <option value="">Seleccione reporte</option>
+              </select>
+            </div>
+            <div class="field field--full">
+              <label for="admReporteEquiposFiltro">Buscar equipo</label>
+              <input id="admReporteEquiposFiltro" type="text" placeholder="Filtrar equipos..." />
+            </div>
+            <div class="field field--full">
+              <label>Equipos</label>
+              <div id="admReporteEquiposChecks" class="checks-grid"></div>
+            </div>
+            <div class="field field--full">
+              <button type="button" id="btnAdmReporteEquiposGuardar" class="btn btn--primary btn--inline">Guardar asignación</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-usuarios" class="tab">
+        <div class="card">
+          <div class="card__header">
+            <h3>Cambiar contraseña</h3>
+            <p class="muted">Actualiza tu contraseña de acceso.</p>
+          </div>
+          <div class="form-grid">
+            <div class="field">
+              <label for="pwdActual">Contraseña actual</label>
+              <input id="pwdActual" type="password" />
+            </div>
+            <div class="field">
+              <label for="pwdNueva">Nueva contraseña</label>
+              <input id="pwdNueva" type="password" />
+            </div>
+            <div class="field field--full">
+              <button type="button" id="btnCambiarPassword" class="btn btn--primary btn--inline">Actualizar contraseña</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" id="usuariosAdminCard">
+          <div class="card__header">
+            <h3>Alta de usuarios</h3>
+            <p class="muted">Se crean con contraseña temporal estándar.</p>
+          </div>
+          <div class="form-grid">
+            <div class="field">
+              <label for="nuevoUsername">Usuario</label>
+              <input id="nuevoUsername" type="text" placeholder="nuevo.usuario" />
+            </div>
+            <div class="field">
+              <label for="nuevoRol">Rol</label>
+              <select id="nuevoRol">
+                <option value="USER">USER</option>
+                <option value="ADMIN">ADMIN</option>
+              </select>
+            </div>
+            <div class="field field--full">
+              <button type="button" id="btnCrearUsuario" class="btn btn--primary btn--inline">Crear usuario</button>
+            </div>
+          </div>
+          <div class="table-wrap mt-4">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Usuario</th>
+                  <th>Roles</th>
+                  <th>Estado</th>
+                </tr>
+              </thead>
+              <tbody id="tbodyUsuarios">
+                <tr><td colspan="4" class="table-empty">Sin usuarios.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="nuevaSolicitudModal" class="modal" style="display:none;">
+    <div class="modal__backdrop" id="btnCloseNuevaModalBg"></div>
+    <div class="modal__panel">
+      <div class="card card--compact">
+        <div class="card__header card__header--between">
+          <h3>Nueva solicitud</h3>
+          <button type="button" id="btnCloseNuevaModal" class="btn btn--ghost btn--sm">Cerrar</button>
+        </div>
+
+        <form id="formNueva" class="form-stack">
+          <div class="field">
+            <label for="reporte">Reporte</label>
+            <select id="reporte" name="reporte" required>
+              <option value="">Cargando...</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="ruta_input_select">Archivo de entrada</label>
+            <div class="input-group">
+              <select id="ruta_input_select">
+                <option value="">-- Seleccionar --</option>
+              </select>
+              <button type="button" id="btn_cargar_archivos" class="btn btn--icon" title="Refrescar archivos">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="23 4 23 10 17 10"></polyline>
+                  <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                </svg>
+              </button>
+            </div>
+            <small id="archivos_help" class="hint">Opcional según reporte</small>
+          </div>
+
+          <div class="field">
+            <label for="parametros">Parámetros (JSON)</label>
+            <textarea id="parametros" name="parametros" rows="5" class="mono text-sm"
+              placeholder='{"periodo":"2026-02"}'></textarea>
+          </div>
+
+          <div class="actions">
+            <button type="submit" class="btn btn--primary btn--block">Enviar</button>
+            <button type="button" id="btnLimpiar" class="btn btn--ghost btn--block btn--sm">Limpiar</button>
+          </div>
+        </form>
+
+        <div id="resultNueva" class="result-box mt-4">
+          <span class="muted text-sm">Listo para enviar</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/js/app.js?v=vanilla1"></script>
+</body>
+
+</html>
