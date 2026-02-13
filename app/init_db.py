@@ -2,7 +2,8 @@ from datetime import datetime, timezone
 from sqlalchemy import select, func, inspect, text
 from .db import Base, engine, SessionLocal
 from .models import Reporte
-from .models_auth import Rol
+from .models_auth import Rol, Usuario, UsuarioRol
+from .security import hash_password
 
 
 def init_db():
@@ -10,20 +11,41 @@ def init_db():
 
     db = SessionLocal()
     try:
-        insp = inspect(engine)
-        cols_reportes = {c["name"].upper() for c in insp.get_columns("REPORTES_REP_GCI")}
-        if "RUTA_OUTPUT_BASE" not in cols_reportes:
-            dialect = engine.dialect.name.lower()
-            if "oracle" in dialect:
-                db.execute(text("ALTER TABLE REPORTES_REP_GCI ADD (RUTA_OUTPUT_BASE VARCHAR2(1000))"))
-            else:
-                db.execute(text("ALTER TABLE REPORTES_REP_GCI ADD COLUMN RUTA_OUTPUT_BASE VARCHAR(1000)"))
-            db.commit()
-
+        # --- 1. Inicialización de ROLES ---
         count_roles = db.execute(select(func.count()).select_from(Rol)).scalar_one()
         if count_roles == 0:
-            db.add_all([Rol(nombre="ADMIN"), Rol(nombre="USER")])
+            rol_admin = Rol(nombre="ADMIN")
+            rol_user = Rol(nombre="USER")
+            db.add_all([rol_admin, rol_user])
             db.commit()
+            print("Roles creados.")
+
+        # --- 2. Inicialización de USUARIO ADMIN ---
+        # Verificamos si ya existe el usuario 'admin'
+        admin_exists = db.execute(select(Usuario).where(Usuario.username == "admin")).scalar_one_or_none()
+        
+        if not admin_exists:
+            # Creamos el objeto Usuario
+            new_admin = Usuario(
+                username="admin",
+                # Nota: Aquí deberías usar un hash real (ej. de passlib o bcrypt)
+                password_hash=hash_password("Admin123!"), 
+                activo=1,
+                created_at=datetime.now(timezone.utc)
+            )
+            db.add(new_admin)
+            db.flush() # flush() envía el objeto a la DB para obtener el ID sin cerrar la transacción
+
+            # --- 3. Asignación de ROL al ADMIN ---
+            # Buscamos el objeto del rol ADMIN que acabamos de crear (o que ya existía)
+            admin_role = db.execute(select(Rol).where(Rol.nombre == "ADMIN")).scalar_one()
+            
+            # Creamos la relación en la tabla intermedia
+            relacion = UsuarioRol(usuario_id=new_admin.id, rol_id=admin_role.id)
+            db.add(relacion)
+            
+            db.commit()
+            print("Usuario admin creado y rol asignado.")
 
         count_reportes = db.execute(select(func.count()).select_from(Reporte)).scalar_one()
         if count_reportes == 0:

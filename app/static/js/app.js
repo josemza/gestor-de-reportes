@@ -109,6 +109,35 @@
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
 
+  const getFileName = (p) => {
+    const raw = (p || "").toString();
+    const parts = raw.split(/[\\/]+/).filter(Boolean);
+    return parts.length ? parts[parts.length - 1] : raw;
+  };
+
+  const getFileOptionLabel = (p) => {
+    const raw = (p || "").toString();
+    const file = getFileName(raw);
+    const parts = raw.split(/[\\/]+/).filter(Boolean);
+    if (parts.length <= 1) return file;
+    const parent = parts[parts.length - 2];
+    return `${file} (${parent})`;
+  };
+
+  async function copyOutputPath(path) {
+    const raw = (path || "").trim();
+    if (!raw) {
+      showAlert("No hay ruta de salida para copiar.", "err");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(raw);
+      showAlert("Ruta copiada al portapapeles.", "ok");
+    } catch (e) {
+      showAlert("No se pudo copiar la ruta al portapapeles.", "err");
+    }
+  }
+
   function showAlert(message, type = "info") {
     const wrap = $("alerts");
     const el = document.createElement("div");
@@ -227,6 +256,8 @@
     for (const ruta of (data.archivos || [])) {
       const opt = document.createElement("option");
       opt.value = ruta;
+      opt.title = ruta;
+      opt.textContent = getFileOptionLabel(ruta);
       sel.appendChild(opt);
     }
 
@@ -272,10 +303,16 @@
     });
 
     $("btnLimpiar").addEventListener("click", () => {
-      $("formNueva").reset();
-      $("parametros").value = "";
-      $("resultNueva").innerHTML = `<div class="result-empty">Formulario limpiado.</div>`;
-      updateHintRutaInput();
+      limpiarFormularioNuevaSolicitud();
+    });
+
+    $("ruta_input_select")?.addEventListener("change", () => {
+      const v = $("ruta_input_select")?.value || "";
+      const help = $("archivos_help");
+      if (!help) return;
+      if (!v) return;
+      help.textContent = `Archivo seleccionado: ${getFileName(v)}`;
+      help.title = v;
     });
 
     $("formNueva").addEventListener("submit", async (ev) => {
@@ -317,6 +354,7 @@
         state.selectedRequestId = out.request_id;
         $("detalleRequestId").value = out.request_id;
         renderResultNueva(out);
+        limpiarFormularioNuevaSolicitud(true);
         closeNuevaModal();
         showAlert(`Solicitud enviada: ${out.request_id}`, "ok");
 
@@ -353,17 +391,33 @@
 
       if (!archivos.length) {
         sel.innerHTML = `<option value="">No hay archivos disponibles</option>`;
+        if ($("archivos_help")) $("archivos_help").textContent = "0 archivo(s) disponibles";
         return;
       }
 
       sel.innerHTML =
         `<option value="">Seleccione archivo...</option>` +
-        archivos.map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join("");
+        archivos.map(r => `<option value="${esc(r)}" title="${esc(r)}">${esc(getFileOptionLabel(r))}</option>`).join("");
+      if ($("archivos_help")) $("archivos_help").textContent = `${archivos.length} archivo(s) disponibles`;
 
     } catch (e) {
       sel.innerHTML = `<option value="">Error cargando archivos</option>`;
       showAlert(`No se pudieron cargar archivos permitidos: ${e.message}`, "err");
     }
+  }
+
+  function limpiarFormularioNuevaSolicitud(preserveResult = false) {
+    $("formNueva").reset();
+    $("parametros").value = "";
+    $("ruta_input_select").innerHTML = `<option value="">Seleccione archivo...</option>`;
+    if ($("archivos_help")) {
+      $("archivos_help").textContent = "Opcional según reporte";
+      $("archivos_help").title = "";
+    }
+    if (!preserveResult) {
+      $("resultNueva").innerHTML = `<div class="result-empty">Formulario limpiado.</div>`;
+    }
+    updateHintRutaInput();
   }
 
   function renderResultNueva(out) {
@@ -523,6 +577,7 @@
   }
 
   function renderDetalle(sol, eventos) {
+    const outputPath = (sol.ruta_output || "").trim();
     $("detalleResumen").innerHTML = `
       <div class="kv"><label>Request ID</label><div class="mono">${esc(sol.request_id)}</div></div>
       <div class="kv"><label>Reporte</label><div>${esc(sol.reporte_codigo)}</div></div>
@@ -533,10 +588,18 @@
       <div class="kv"><label>Solicitado</label><div>${esc(fmtDate(sol.fecha_solicitud))}</div></div>
       <div class="kv"><label>Inicio</label><div>${esc(fmtDate(sol.fecha_inicio))}</div></div>
       <div class="kv"><label>Fin</label><div>${esc(fmtDate(sol.fecha_fin))}</div></div>
-      <div class="kv"><label>Ruta output</label><div>${esc(sol.ruta_output || "-")}</div></div>
+      <div class="kv">
+        <label>Ruta output</label>
+        <div>${esc(outputPath || "-")}</div>
+        ${outputPath ? '<button id="btnCopyOutputPath" class="btn btn--ghost btn--sm" type="button" style="margin-top:8px;">Copiar ruta</button>' : ""}
+      </div>
       <div class="kv"><label>Error detalle</label><div>${esc(sol.error_detalle || "-")}</div></div>
       <div class="kv"><label>Última actualización</label><div>${esc(fmtDate(sol.updated_at))}</div></div>
     `;
+
+    if (outputPath) {
+      $("btnCopyOutputPath")?.addEventListener("click", () => copyOutputPath(outputPath));
+    }
 
     if (!eventos?.length) {
       $("detalleEventos").innerHTML = `<div class="result-empty">No hay eventos.</div>`;

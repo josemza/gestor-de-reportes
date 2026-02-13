@@ -113,8 +113,8 @@ def build_command(
 
     # args base estándar
     std_args = [
-        # f'--request_id "{request_id}"',
-        # f'--usuario "{usuario}"',
+        f'--request_id "{request_id}"',
+        f'--usuario "{usuario}"',
     ]
     if ruta_input:
         std_args.append(f'--ruta_input "{ruta_input}"')
