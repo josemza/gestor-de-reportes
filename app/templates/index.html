@@ -41,7 +41,14 @@
   <div id="app-view" class="app-shell" style="display:none;">
     <aside class="sidebar">
       <div class="brand">
-        <div class="brand__logo">R</div>
+        <div class="brand__logo" id="btnSidebarBrand" role="button" title="Expandir/colapsar menú">
+          <span class="brand__logo-initial">R</span>
+          <svg class="brand__logo-collapsed-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="3" y1="6" x2="21" y2="6"></line>
+            <line x1="3" y1="12" x2="21" y2="12"></line>
+            <line x1="3" y1="18" x2="21" y2="18"></line>
+          </svg>
+        </div>
         <div class="brand__text">
           <h1>Centro de Reportes</h1>
           <p>Gestión de solicitudes</p>
@@ -151,13 +158,13 @@
           <div class="card card--full-height">
             <div class="card__header card__header--between">
               <h3>Monitoreo</h3>
-              <div class="inline-controls">
+              <div class="inline-controls inline-controls--monitoreo">
                 <label class="switch text-sm">
                   <input type="checkbox" id="autoRefresh" checked />
                   <span>Auto (5s)</span>
                 </label>
 
-                <div class="filter-row">
+                <div class="filter-row filter-row--monitoreo">
                   <input id="fUsuario" type="text" placeholder="Usuario" class="input-sm" />
                   <select id="fEstado" class="input-sm">
                     <option value="">Estado: Todos</option>
@@ -166,12 +173,16 @@
                     <option value="OK">OK</option>
                     <option value="ERROR">Error</option>
                   </select>
+                  <input id="fReporteCodigo" type="text" placeholder="Reporte (código)" class="input-sm" />
+                  <input id="fFechaDesde" type="date" class="input-sm" />
+                  <input id="fFechaHasta" type="date" class="input-sm" />
                   <button id="btnBuscarMis" class="btn btn--ghost btn--sm btn--icon" title="Buscar">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <circle cx="11" cy="11" r="8"></circle>
                       <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
                     </svg>
                   </button>
+                  <button id="btnLimpiarMisFiltros" class="btn btn--ghost btn--sm" type="button">Limpiar</button>
                 </div>
               </div>
             </div>
@@ -185,16 +196,27 @@
                     <th>Estado</th>
                     <th style="width:80px">Progreso</th>
                     <th>Mensaje</th>
-                    <th>Hora</th>
+                    <th>Solicitado</th>
+                    <th>Actualizado</th>
                     <th></th>
                   </tr>
                 </thead>
                 <tbody id="tbodyMis">
                   <tr>
-                    <td colspan="7" class="table-empty">Cargando...</td>
+                    <td colspan="8" class="table-empty">Cargando...</td>
                   </tr>
                 </tbody>
               </table>
+            </div>
+            <div class="table-footer-controls">
+              <select id="misPageSize" class="input-sm">
+                <option value="10" selected>10 / página</option>
+                <option value="20">20 / página</option>
+                <option value="30">30 / página</option>
+              </select>
+              <button id="misPrevPage" class="btn btn--ghost btn--sm" type="button">Anterior</button>
+              <span id="misPageInfo" class="muted text-sm">Página 1 de 1</span>
+              <button id="misNextPage" class="btn btn--ghost btn--sm" type="button">Siguiente</button>
             </div>
           </div>
         </div>
@@ -350,9 +372,12 @@
           <div class="card__header card__header--between">
             <div>
               <h3>Reportes registrados</h3>
-              <p class="muted">Edición rápida por fila.</p>
+              <p class="muted">Edición mediante formulario modal.</p>
             </div>
-            <button type="button" id="btnAdmRepRefrescar" class="btn btn--ghost btn--sm">Recargar</button>
+            <div class="inline-controls">
+              <input id="admRepFiltroCodigo" type="text" class="input-sm" placeholder="Filtrar por código" />
+              <button type="button" id="btnAdmRepRefrescar" class="btn btn--ghost btn--sm">Recargar</button>
+            </div>
           </div>
           <div class="table-wrap">
             <table class="table">
@@ -361,16 +386,25 @@
                   <th>ID</th>
                   <th>Código</th>
                   <th>Nombre</th>
-                  <th>Ruta output</th>
                   <th>Input</th>
                   <th>Activo</th>
                   <th>Acciones</th>
                 </tr>
               </thead>
               <tbody id="tbodyAdminReportes">
-                <tr><td colspan="7" class="table-empty">Sin datos.</td></tr>
+                <tr><td colspan="6" class="table-empty">Sin datos.</td></tr>
               </tbody>
             </table>
+          </div>
+          <div class="table-footer-controls">
+            <select id="admRepPageSize" class="input-sm">
+              <option value="10" selected>10 / página</option>
+              <option value="20">20 / página</option>
+              <option value="30">30 / página</option>
+            </select>
+            <button id="admRepPrevPage" class="btn btn--ghost btn--sm" type="button">Anterior</button>
+            <span id="admRepPageInfo" class="muted text-sm">Página 1 de 1</span>
+            <button id="admRepNextPage" class="btn btn--ghost btn--sm" type="button">Siguiente</button>
           </div>
         </div>
       </section>
@@ -528,6 +562,67 @@
         </div>
       </section>
     </main>
+  </div>
+
+  <div id="adminReporteModal" class="modal" style="display:none;">
+    <div class="modal__backdrop" id="btnCloseAdmRepModalBg"></div>
+    <div class="modal__panel modal__panel--wide">
+      <div class="card card--compact">
+        <div class="card__header card__header--between">
+          <h3>Editar reporte</h3>
+          <button type="button" id="btnCloseAdmRepModal" class="btn btn--ghost btn--sm">Cerrar</button>
+        </div>
+
+        <form id="formAdminReporteEdit" class="form-grid">
+          <input id="admEditRepId" type="hidden" />
+          <div class="field">
+            <label for="admEditRepIdView">ID</label>
+            <input id="admEditRepIdView" type="text" readonly />
+          </div>
+          <div class="field">
+            <label for="admEditRepCodigo">Código</label>
+            <input id="admEditRepCodigo" type="text" />
+          </div>
+          <div class="field">
+            <label for="admEditRepNombre">Nombre</label>
+            <input id="admEditRepNombre" type="text" />
+          </div>
+          <div class="field field--full">
+            <label for="admEditRepDescripcion">Descripción</label>
+            <textarea id="admEditRepDescripcion" rows="2"></textarea>
+          </div>
+          <div class="field">
+            <label for="admEditRepReqInput">Requiere input</label>
+            <select id="admEditRepReqInput">
+              <option value="1">Sí</option>
+              <option value="0">No</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="admEditRepActivo">Activo</label>
+            <select id="admEditRepActivo">
+              <option value="1">Sí</option>
+              <option value="0">No</option>
+            </select>
+          </div>
+          <div class="field field--full">
+            <label for="admEditRepRutaOutput">Ruta output base</label>
+            <input id="admEditRepRutaOutput" type="text" />
+          </div>
+          <div class="field">
+            <label for="admEditRepTipos">Tipos permitidos</label>
+            <input id="admEditRepTipos" type="text" placeholder="csv;xlsx" />
+          </div>
+          <div class="field">
+            <label for="admEditRepComando">Comando</label>
+            <input id="admEditRepComando" type="text" placeholder="python generar_reporte.py" />
+          </div>
+          <div class="field field--full">
+            <button type="submit" class="btn btn--primary btn--inline">Guardar cambios</button>
+          </div>
+        </form>
+      </div>
+    </div>
   </div>
 
   <div id="nuevaSolicitudModal" class="modal" style="display:none;">

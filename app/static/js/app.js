@@ -1,11 +1,17 @@
 (() => {
   const state = {
     reportes: [],
+    misSolicitudes: [],
     adminReportes: [],
+    adminReportesAll: [],
     adminUsuarios: [],
     adminEquipos: [],
     adminUsuarioEquipoIds: [],
     adminReporteEquipoIds: [],
+    misCurrentPage: 1,
+    misPageSize: 10,
+    admRepCurrentPage: 1,
+    admRepPageSize: 10,
     me: null,
     autoRefreshTimer: null,
     apiBase: window.location.origin,
@@ -62,6 +68,19 @@
     if (usersAdminCard) {
       usersAdminCard.style.display = isAdmin ? "" : "none";
     }
+
+    const fUsuario = $("fUsuario");
+    if (fUsuario) {
+      if (isAdmin) {
+        fUsuario.disabled = false;
+        fUsuario.readOnly = false;
+        fUsuario.title = "";
+      } else {
+        fUsuario.value = me?.username || "";
+        fUsuario.disabled = true;
+        fUsuario.title = "Solo los administradores pueden cambiar este filtro.";
+      }
+    }
   }
 
   function setSidebarCollapsed(collapsed) {
@@ -78,6 +97,16 @@
 
   function closeNuevaModal() {
     const modal = $("nuevaSolicitudModal");
+    if (modal) modal.style.display = "none";
+  }
+
+  function openAdminReporteModal() {
+    const modal = $("adminReporteModal");
+    if (modal) modal.style.display = "";
+  }
+
+  function closeAdminReporteModal() {
+    const modal = $("adminReporteModal");
     if (modal) modal.style.display = "none";
   }
 
@@ -469,28 +498,62 @@
   }
 
   async function fetchMisSolicitudes() {
-    const usuario = $("fUsuario").value.trim();
-    const estado = $("fEstado").value.trim();
-    const limitInput = $("fLimit");
-    const limit = Number(limitInput?.value || 100);
+    const isAdmin = state.me?.roles?.includes("ADMIN") || state.me?.username === "admin";
+    const usuarioInput = $("fUsuario")?.value?.trim() || "";
+    const usuario = isAdmin ? usuarioInput : (state.me?.username || usuarioInput);
 
     if (!usuario) {
+      state.misSolicitudes = [];
+      renderTablaMis([]);
       $("tbodyMis").innerHTML = `<tr><td colspan="8" class="table-empty">Ingresa un usuario para buscar.</td></tr>`;
+      updateMisPaginationControls(1, 1, 0);
       return;
     }
 
     try {
-      const rows = await api(`/mis-solicitudes?usuario=${encodeURIComponent(usuario)}&limit=${encodeURIComponent(limit)}`);
-      const filtered = estado ? rows.filter(r => r.estado === estado) : rows;
-      renderTablaMis(filtered);
+      const pageSize = Number($("misPageSize")?.value || state.misPageSize || 10);
+      const params = new URLSearchParams();
+      params.set("usuario", usuario);
+      params.set("page", String(state.misCurrentPage || 1));
+      params.set("page_size", String(pageSize));
+
+      const estado = $("fEstado")?.value?.trim();
+      const reporteCodigo = $("fReporteCodigo")?.value?.trim();
+      const fechaDesde = $("fFechaDesde")?.value?.trim();
+      const fechaHasta = $("fFechaHasta")?.value?.trim();
+      if (estado) params.set("estado", estado);
+      if (reporteCodigo) params.set("reporte_codigo", reporteCodigo);
+      if (fechaDesde) params.set("fecha_desde", fechaDesde);
+      if (fechaHasta) params.set("fecha_hasta", fechaHasta);
+
+      const result = await api(`/mis-solicitudes?${params.toString()}`);
+      state.misSolicitudes = result?.items || [];
+      state.misCurrentPage = Number(result?.page || 1);
+      state.misPageSize = Number(result?.page_size || pageSize);
+      if ($("misPageSize")) $("misPageSize").value = String(state.misPageSize);
+      renderTablaMis(state.misSolicitudes);
+      updateMisPaginationControls(
+        Number(result?.page || 1),
+        Number(result?.total_pages || 1),
+        Number(result?.total || 0)
+      );
     } catch (e) {
       showAlert(`Error consultando solicitudes: ${e.message}`, "err");
     }
   }
 
-  function renderTablaMis(rows) {
+  function updateMisPaginationControls(page, totalPages, totalItems) {
+    const info = $("misPageInfo");
+    const prev = $("misPrevPage");
+    const next = $("misNextPage");
+    if (info) info.textContent = `Página ${page} de ${totalPages} (${totalItems} registros)`;
+    if (prev) prev.disabled = page <= 1;
+    if (next) next.disabled = page >= totalPages;
+  }
+
+  function renderTablaMis(rows = []) {
     const tb = $("tbodyMis");
-    if (!rows?.length) {
+    if (!rows.length) {
       tb.innerHTML = `<tr><td colspan="8" class="table-empty">No se encontraron solicitudes.</td></tr>`;
       return;
     }
@@ -523,6 +586,42 @@
 
   function setupMisSolicitudes() {
     $("btnBuscarMis").addEventListener("click", fetchMisSolicitudes);
+    $("btnLimpiarMisFiltros")?.addEventListener("click", () => {
+      if ($("fEstado")) $("fEstado").value = "";
+      if ($("fReporteCodigo")) $("fReporteCodigo").value = "";
+      if ($("fFechaDesde")) $("fFechaDesde").value = "";
+      if ($("fFechaHasta")) $("fFechaHasta").value = "";
+      state.misCurrentPage = 1;
+      fetchMisSolicitudes();
+    });
+    $("fEstado")?.addEventListener("change", () => {
+      state.misCurrentPage = 1;
+      fetchMisSolicitudes();
+    });
+    $("fReporteCodigo")?.addEventListener("input", () => {
+      state.misCurrentPage = 1;
+      fetchMisSolicitudes();
+    });
+    $("fFechaDesde")?.addEventListener("change", () => {
+      state.misCurrentPage = 1;
+      fetchMisSolicitudes();
+    });
+    $("fFechaHasta")?.addEventListener("change", () => {
+      state.misCurrentPage = 1;
+      fetchMisSolicitudes();
+    });
+    $("misPageSize")?.addEventListener("change", () => {
+      state.misCurrentPage = 1;
+      fetchMisSolicitudes();
+    });
+    $("misPrevPage")?.addEventListener("click", () => {
+      state.misCurrentPage = Math.max(1, state.misCurrentPage - 1);
+      fetchMisSolicitudes();
+    });
+    $("misNextPage")?.addEventListener("click", () => {
+      state.misCurrentPage = state.misCurrentPage + 1;
+      fetchMisSolicitudes();
+    });
 
     $("btnRefreshAll").addEventListener("click", async () => {
       await loadHealth();
@@ -628,18 +727,24 @@
     const collapsed = localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1";
     setSidebarCollapsed(collapsed);
 
-    $("btnSidebarToggle")?.addEventListener("click", () => {
+    const toggleSidebar = () => {
       const appView = $("app-view");
       const isCollapsed = appView?.classList.contains("app-shell--collapsed");
       setSidebarCollapsed(!isCollapsed);
-    });
+    };
+
+    $("btnSidebarToggle")?.addEventListener("click", toggleSidebar);
+    $("btnSidebarBrand")?.addEventListener("click", toggleSidebar);
 
     $("btnOpenNuevaModal")?.addEventListener("click", openNuevaModal);
     $("btnCloseNuevaModal")?.addEventListener("click", closeNuevaModal);
     $("btnCloseNuevaModalBg")?.addEventListener("click", closeNuevaModal);
 
     document.addEventListener("keydown", (ev) => {
-      if (ev.key === "Escape") closeNuevaModal();
+      if (ev.key === "Escape") {
+        closeNuevaModal();
+        closeAdminReporteModal();
+      }
     });
   }
 
@@ -873,78 +978,101 @@
 
     const isAdmin = state.me?.roles?.includes("ADMIN") || state.me?.username === "admin";
     if (!isAdmin) {
-      tb.innerHTML = `<tr><td colspan="7" class="table-empty">Sin permisos.</td></tr>`;
+      tb.innerHTML = `<tr><td colspan="6" class="table-empty">Sin permisos.</td></tr>`;
       return;
     }
 
-    tb.innerHTML = `<tr><td colspan="7" class="table-empty">Cargando...</td></tr>`;
+    tb.innerHTML = `<tr><td colspan="6" class="table-empty">Cargando...</td></tr>`;
     try {
-      const rows = await api("/admin/reportes");
-      state.adminReportes = rows || [];
-      renderAdminReportes(rows || []);
-      fillReporteEquiposSelect();
+      const pageSize = Number($("admRepPageSize")?.value || state.admRepPageSize || 10);
+      const params = new URLSearchParams();
+      params.set("page", String(state.admRepCurrentPage || 1));
+      params.set("page_size", String(pageSize));
+      const codigo = $("admRepFiltroCodigo")?.value?.trim();
+      if (codigo) params.set("codigo", codigo);
+
+      const result = await api(`/admin/reportes?${params.toString()}`);
+      state.adminReportes = result?.items || [];
+      state.admRepCurrentPage = Number(result?.page || 1);
+      state.admRepPageSize = Number(result?.page_size || pageSize);
+      if ($("admRepPageSize")) $("admRepPageSize").value = String(state.admRepPageSize);
+
+      renderAdminReportes(state.adminReportes);
+      updateAdminReportesPaginationControls(
+        Number(result?.page || 1),
+        Number(result?.total_pages || 1),
+        Number(result?.total || 0)
+      );
+      await refreshAdminReportesAll();
     } catch (e) {
-      tb.innerHTML = `<tr><td colspan="7" class="table-empty">Error al cargar reportes.</td></tr>`;
+      tb.innerHTML = `<tr><td colspan="6" class="table-empty">Error al cargar reportes.</td></tr>`;
       showAlert(`No se pudieron cargar reportes admin: ${e.message}`, "err");
     }
   }
 
-  function renderAdminReportes(rows) {
+  async function refreshAdminReportesAll() {
+    try {
+      const out = await api("/admin/reportes?page=1&page_size=500");
+      state.adminReportesAll = out?.items || [];
+      fillReporteEquiposSelect();
+    } catch (e) {
+      // noop: no bloquea la pantalla principal de admin reportes
+    }
+  }
+
+  function updateAdminReportesPaginationControls(page, totalPages, totalItems) {
+    const info = $("admRepPageInfo");
+    const prev = $("admRepPrevPage");
+    const next = $("admRepNextPage");
+    if (info) info.textContent = `Página ${page} de ${totalPages} (${totalItems} registros)`;
+    if (prev) prev.disabled = page <= 1;
+    if (next) next.disabled = page >= totalPages;
+  }
+
+  function renderAdminReportes(rows = []) {
     const tb = $("tbodyAdminReportes");
     if (!tb) return;
-
     if (!rows.length) {
-      tb.innerHTML = `<tr><td colspan="7" class="table-empty">No hay reportes.</td></tr>`;
+      tb.innerHTML = `<tr><td colspan="6" class="table-empty">No hay reportes.</td></tr>`;
       return;
     }
 
     tb.innerHTML = rows.map((r) => `
       <tr>
         <td class="mono">${esc(r.id)}</td>
-        <td><input id="adm_codigo_${esc(r.id)}" value="${esc(r.codigo)}" /></td>
-        <td><input id="adm_nombre_${esc(r.id)}" value="${esc(r.nombre)}" /></td>
-        <td><input id="adm_out_${esc(r.id)}" value="${esc(r.ruta_output_base || "")}" /></td>
-        <td>
-          <select id="adm_req_${esc(r.id)}">
-            <option value="1" ${r.requiere_input_archivo === 1 ? "selected" : ""}>SI</option>
-            <option value="0" ${r.requiere_input_archivo === 0 ? "selected" : ""}>NO</option>
-          </select>
-        </td>
-        <td>
-          <select id="adm_activo_${esc(r.id)}">
-            <option value="1" ${r.activo === 1 ? "selected" : ""}>ACTIVO</option>
-            <option value="0" ${r.activo === 0 ? "selected" : ""}>INACTIVO</option>
-          </select>
-        </td>
+        <td class="mono">${esc(r.codigo)}</td>
+        <td>${esc(r.nombre)}</td>
+        <td>${r.requiere_input_archivo === 1 ? "SI" : "NO"}</td>
+        <td>${r.activo === 1 ? "ACTIVO" : "INACTIVO"}</td>
         <td>
           <div class="inline-controls">
-            <button class="btn btn--ghost btn-admrep-save" data-id="${esc(r.id)}">Guardar</button>
+            <button class="btn btn--ghost btn-admrep-edit" data-id="${esc(r.id)}">Editar</button>
             <button class="btn btn--ghost btn-admrep-delete" data-id="${esc(r.id)}">Desactivar</button>
           </div>
         </td>
       </tr>
     `).join("");
 
-    document.querySelectorAll(".btn-admrep-save").forEach((btn) => {
+    document.querySelectorAll(".btn-admrep-edit").forEach((btn) => {
       btn.addEventListener("click", async () => {
-        const id = btn.dataset.id;
-        try {
-          await api(`/admin/reportes/${encodeURIComponent(id)}`, {
-            method: "PATCH",
-            body: JSON.stringify({
-              codigo: $(`adm_codigo_${id}`)?.value?.trim(),
-              nombre: $(`adm_nombre_${id}`)?.value?.trim(),
-              ruta_output_base: $(`adm_out_${id}`)?.value?.trim() || null,
-              requiere_input_archivo: Number($(`adm_req_${id}`)?.value || 0),
-              activo: Number($(`adm_activo_${id}`)?.value || 0),
-            }),
-          });
-          showAlert(`Reporte ${id} actualizado.`, "ok");
-          await loadReportes();
-          await loadAdminReportes();
-        } catch (e) {
-          showAlert(`No se pudo actualizar reporte: ${e.message}`, "err");
+        const id = Number(btn.dataset.id);
+        const row = (state.adminReportes || []).find((x) => Number(x.id) === id);
+        if (!row) {
+          showAlert("No se encontró el reporte seleccionado.", "err");
+          return;
         }
+
+        $("admEditRepId").value = row.id;
+        $("admEditRepIdView").value = row.id;
+        $("admEditRepCodigo").value = row.codigo || "";
+        $("admEditRepNombre").value = row.nombre || "";
+        $("admEditRepDescripcion").value = row.descripcion || "";
+        $("admEditRepReqInput").value = String(row.requiere_input_archivo ?? 0);
+        $("admEditRepActivo").value = String(row.activo ?? 0);
+        $("admEditRepRutaOutput").value = row.ruta_output_base || "";
+        $("admEditRepTipos").value = row.tipos_permitidos || "";
+        $("admEditRepComando").value = row.comando || "";
+        openAdminReporteModal();
       });
     });
 
@@ -961,6 +1089,44 @@
         }
       });
     });
+  }
+
+  async function saveAdminReporteFromModal(ev) {
+    ev.preventDefault();
+    const id = $("admEditRepId")?.value?.trim();
+    if (!id) {
+      showAlert("No hay reporte seleccionado para editar.", "err");
+      return;
+    }
+
+    const payload = {
+      codigo: $("admEditRepCodigo")?.value?.trim(),
+      nombre: $("admEditRepNombre")?.value?.trim(),
+      descripcion: $("admEditRepDescripcion")?.value?.trim() || null,
+      requiere_input_archivo: Number($("admEditRepReqInput")?.value || 0),
+      activo: Number($("admEditRepActivo")?.value || 0),
+      ruta_output_base: $("admEditRepRutaOutput")?.value?.trim() || null,
+      tipos_permitidos: $("admEditRepTipos")?.value?.trim() || null,
+      comando: $("admEditRepComando")?.value?.trim() || null,
+    };
+
+    if (!payload.codigo || !payload.nombre) {
+      showAlert("Código y nombre son obligatorios.", "err");
+      return;
+    }
+
+    try {
+      await api(`/admin/reportes/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      });
+      closeAdminReporteModal();
+      showAlert(`Reporte ${id} actualizado.`, "ok");
+      await loadReportes();
+      await loadAdminReportes();
+    } catch (e) {
+      showAlert(`No se pudo actualizar reporte: ${e.message}`, "err");
+    }
   }
 
   async function createAdminReporte() {
@@ -1002,6 +1168,25 @@
   function setupAdminReportes() {
     $("btnAdmRepCrear")?.addEventListener("click", createAdminReporte);
     $("btnAdmRepRefrescar")?.addEventListener("click", loadAdminReportes);
+    $("btnCloseAdmRepModal")?.addEventListener("click", closeAdminReporteModal);
+    $("btnCloseAdmRepModalBg")?.addEventListener("click", closeAdminReporteModal);
+    $("formAdminReporteEdit")?.addEventListener("submit", saveAdminReporteFromModal);
+    $("admRepFiltroCodigo")?.addEventListener("input", () => {
+      state.admRepCurrentPage = 1;
+      loadAdminReportes();
+    });
+    $("admRepPageSize")?.addEventListener("change", () => {
+      state.admRepCurrentPage = 1;
+      loadAdminReportes();
+    });
+    $("admRepPrevPage")?.addEventListener("click", () => {
+      state.admRepCurrentPage = Math.max(1, state.admRepCurrentPage - 1);
+      loadAdminReportes();
+    });
+    $("admRepNextPage")?.addEventListener("click", () => {
+      state.admRepCurrentPage = state.admRepCurrentPage + 1;
+      loadAdminReportes();
+    });
   }
 
   // ---------- Admin Equipos ----------
@@ -1063,7 +1248,7 @@
     const sel = $("admReporteEquipo");
     if (!sel) return;
 
-    const rows = state.adminReportes || [];
+    const rows = (state.adminReportesAll?.length ? state.adminReportesAll : state.adminReportes) || [];
     if (!rows.length) {
       sel.innerHTML = `<option value="">No hay reportes</option>`;
       return;
@@ -1145,11 +1330,11 @@
       const [equipos, usuarios, reportes] = await Promise.all([
         api("/admin/equipos"),
         api("/admin/usuarios"),
-        api("/admin/reportes"),
+        api("/admin/reportes?page=1&page_size=500"),
       ]);
       state.adminEquipos = equipos || [];
       state.adminUsuarios = usuarios || [];
-      state.adminReportes = reportes || [];
+      state.adminReportesAll = reportes?.items || [];
 
       renderEquiposTable(state.adminEquipos);
       fillUsuarioEquiposSelect();
@@ -1199,21 +1384,33 @@
   }
 
   async function saveEquiposUsuario() {
+    const btn = $("btnAdmUsuarioEquiposGuardar");
     const usuarioId = $("admUsuarioEquipo")?.value?.trim();
     if (!usuarioId) {
       showAlert("Selecciona un usuario.", "err");
       return;
     }
+    const usuarioNombre = $("admUsuarioEquipo")?.selectedOptions?.[0]?.textContent?.trim() || `ID ${usuarioId}`;
     const ids = (state.adminUsuarioEquipoIds || []).map(Number);
     try {
+      if (btn) {
+        btn.disabled = true;
+        btn.dataset.prevText = btn.textContent || "";
+        btn.textContent = "Guardando...";
+      }
       await api(`/admin/usuarios/${encodeURIComponent(usuarioId)}/equipos`, {
         method: "PUT",
         body: JSON.stringify({ equipo_ids: ids }),
       });
-      showAlert("Asignación de equipos a usuario actualizada.", "ok");
+      showAlert(`Asignación aplicada para usuario ${usuarioNombre} (${ids.length} equipos).`, "ok");
       await loadReportes();
     } catch (e) {
       showAlert(`No se pudo guardar asignación de usuario: ${e.message}`, "err");
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = btn.dataset.prevText || "Guardar asignación";
+      }
     }
   }
 
@@ -1234,21 +1431,33 @@
   }
 
   async function saveEquiposReporte() {
+    const btn = $("btnAdmReporteEquiposGuardar");
     const reporteId = $("admReporteEquipo")?.value?.trim();
     if (!reporteId) {
       showAlert("Selecciona un reporte.", "err");
       return;
     }
+    const reporteNombre = $("admReporteEquipo")?.selectedOptions?.[0]?.textContent?.trim() || `ID ${reporteId}`;
     const ids = (state.adminReporteEquipoIds || []).map(Number);
     try {
+      if (btn) {
+        btn.disabled = true;
+        btn.dataset.prevText = btn.textContent || "";
+        btn.textContent = "Guardando...";
+      }
       await api(`/admin/reportes/${encodeURIComponent(reporteId)}/equipos`, {
         method: "PUT",
         body: JSON.stringify({ equipo_ids: ids }),
       });
-      showAlert("Asignación de equipos a reporte actualizada.", "ok");
+      showAlert(`Asignación aplicada para reporte ${reporteNombre} (${ids.length} equipos).`, "ok");
       await loadReportes();
     } catch (e) {
       showAlert(`No se pudo guardar asignación de reporte: ${e.message}`, "err");
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = btn.dataset.prevText || "Guardar asignación";
+      }
     }
   }
 

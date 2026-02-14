@@ -149,6 +149,18 @@ textarea {
   box-shadow: 0 0 10px rgba(0, 153, 204, 0.4);
 }
 
+.brand__logo-collapsed-icon {
+  display: none;
+}
+
+.app-shell.app-shell--collapsed .brand__logo-initial {
+  display: none;
+}
+
+.app-shell.app-shell--collapsed .brand__logo-collapsed-icon {
+  display: block;
+}
+
 .brand__text h1 {
   margin: 0;
   font-size: 0.95rem;
@@ -265,15 +277,34 @@ textarea {
 }
 
 .app-shell.app-shell--collapsed .sidebar-toggle {
-  margin-left: 0;
-  position: absolute;
-  top: 14px;
-  right: 8px;
+  display: none;
 }
 
 .app-shell.app-shell--collapsed .menu__item {
   justify-content: center;
   padding: 0.6rem 0.25rem;
+}
+
+.app-shell.app-shell--collapsed .sidebar__meta {
+  display: block;
+  border-top: none;
+  padding-top: 0;
+  margin-top: auto;
+}
+
+.app-shell.app-shell--collapsed .sidebar__meta > p,
+.app-shell.app-shell--collapsed #apiBaseLabel,
+.app-shell.app-shell--collapsed #healthBadge {
+  display: none;
+}
+
+.app-shell.app-shell--collapsed .user-mini-profile {
+  justify-content: center;
+  padding: 0.35rem;
+}
+
+.app-shell.app-shell--collapsed .user-mini-profile .user-name {
+  display: none;
 }
 
 /* --- Dashboard Grid --- */
@@ -364,10 +395,57 @@ textarea {
   /* Card has border */
 }
 
+.inline-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
 .filter-row {
   display: flex;
   gap: 0.5rem;
   align-items: center;
+  flex-wrap: wrap;
+}
+
+.inline-controls--monitoreo {
+  justify-content: flex-end;
+  width: 100%;
+  flex-wrap: nowrap;
+}
+
+.filter-row--monitoreo {
+  flex-wrap: nowrap;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.filter-row--monitoreo input,
+.filter-row--monitoreo select {
+  width: auto;
+  flex: 0 0 auto;
+}
+
+#fUsuario {
+  width: 130px;
+}
+
+#fEstado {
+  width: 140px;
+}
+
+#fReporteCodigo {
+  width: 150px;
+}
+
+#fFechaDesde,
+#fFechaHasta {
+  width: 132px;
+}
+
+#misPageSize {
+  width: 108px;
 }
 
 .result-box {
@@ -387,6 +465,15 @@ textarea {
   .card--full-height {
     height: auto;
     min-height: 400px;
+  }
+
+  .inline-controls--monitoreo {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .filter-row--monitoreo {
+    flex-wrap: wrap;
   }
 }
 
@@ -633,6 +720,14 @@ textarea:focus {
   border-bottom: none;
 }
 
+.table-footer-controls {
+  margin-top: 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
 .table-empty {
   text-align: center;
   color: var(--text-muted);
@@ -811,6 +906,10 @@ textarea:focus {
   padding: 0 1rem;
   max-height: 92vh;
   overflow: auto;
+}
+
+.modal__panel--wide {
+  max-width: 980px;
 }
 
 @media (max-width: 1024px) {

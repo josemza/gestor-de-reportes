@@ -5,20 +5,21 @@ from pathlib import Path
 from fastapi import FastAPI, Depends, HTTPException, Query, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
 from sqlalchemy.orm import Session
 
 from .config import settings
 from .db import get_db
 from .deps_auth import require_admin_rutas, get_current_user
 from . import crud
-from .schemas import HealthOut, ReporteOut, ReporteCreate, SolicitudCreate, SolicitudOut, EventoOut
+from .schemas import HealthOut, ReporteOut, ReporteCreate, SolicitudCreate, SolicitudOut, SolicitudPageOut, EventoOut
 from .schemas_admin import (
     CarpetaPermitidaCreate,
     CarpetaPermitidaOut,
     CarpetaPermitidaUpdate,
     ReporteAdminCreate,
     ReporteAdminOut,
+    ReporteAdminPageOut,
     ReporteAdminUpdate,
     EquipoCreate,
     EquipoUpdate,
@@ -27,7 +28,7 @@ from .schemas_admin import (
 )
 from .schemas_auth import UserCreateIn, UserCreateOut, UserOut
 from .init_db import init_db
-from .models import SolicitudEvento, Reporte, ReporteCarpetaPermitida, ReporteEquipo
+from .models import Solicitud, SolicitudEvento, Reporte, ReporteCarpetaPermitida, ReporteEquipo
 from .models_auth import Usuario, Rol, UsuarioRol, Equipo, UsuarioEquipo
 from .security import hash_password
 from .routers.auth import router as auth_router
@@ -113,14 +114,38 @@ def create_reporte(payload: ReporteCreate, db: Session = Depends(get_db)):
     return crud.create_reporte(db, payload.model_dump())
 
 
-@app.get("/admin/reportes", response_model=list[ReporteAdminOut], tags=["admin"])
+@app.get("/admin/reportes", response_model=ReporteAdminPageOut, tags=["admin"])
 def list_reportes_admin(
+    codigo: str = Query("", max_length=100),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=500),
     db: Session = Depends(get_db),
     _user=Depends(require_admin_rutas),
 ):
-    return db.execute(
-        select(Reporte).order_by(Reporte.codigo.asc())
+    codigo_norm = (codigo or "").strip().upper()
+    query = select(Reporte)
+    if codigo_norm:
+        query = query.where(func.upper(Reporte.codigo).like(f"%{codigo_norm}%"))
+
+    total = db.execute(
+        select(func.count()).select_from(query.subquery())
+    ).scalar_one()
+
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    page_safe = min(page, total_pages) if total > 0 else 1
+    offset = (page_safe - 1) * page_size
+
+    items = db.execute(
+        query.order_by(Reporte.codigo.asc()).offset(offset).limit(page_size)
     ).scalars().all()
+
+    return ReporteAdminPageOut(
+        items=items,
+        total=total,
+        page=page_safe,
+        page_size=page_size,
+        total_pages=total_pages,
+    )
 
 
 @app.post("/admin/reportes", response_model=ReporteAdminOut, tags=["admin"])
@@ -288,31 +313,85 @@ def get_solicitud(request_id: str, db: Session = Depends(get_db)):
     )
 
 
-@app.get("/mis-solicitudes", response_model=list[SolicitudOut], tags=["solicitudes"])
+@app.get("/mis-solicitudes", response_model=SolicitudPageOut, tags=["solicitudes"])
 def mis_solicitudes(
     usuario: str = Query(..., min_length=1),
-    limit: int = Query(100, ge=1, le=500),
+    estado: str = Query(""),
+    reporte_codigo: str = Query("", max_length=100),
+    fecha_desde: str | None = Query(default=None),
+    fecha_hasta: str | None = Query(default=None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=500),
     db: Session = Depends(get_db),
 ):
-    rows = crud.list_solicitudes_usuario(db, usuario=usuario, limit=limit)
+    usuario_norm = usuario.strip()
+    estado_norm = (estado or "").strip().upper()
+    reporte_codigo_norm = (reporte_codigo or "").strip().upper()
+
+    dt_desde = None
+    dt_hasta = None
+    try:
+        if fecha_desde:
+            dt_desde = datetime.fromisoformat(fecha_desde)
+            if len(fecha_desde) == 10:
+                dt_desde = dt_desde.replace(hour=0, minute=0, second=0, microsecond=0)
+        if fecha_hasta:
+            dt_hasta = datetime.fromisoformat(fecha_hasta)
+            if len(fecha_hasta) == 10:
+                dt_hasta = dt_hasta.replace(hour=23, minute=59, second=59, microsecond=999999)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Formato de fecha inválido. Usa YYYY-MM-DD") from e
+
+    query = (
+        select(Solicitud, Reporte.codigo, Reporte.ruta_output_base)
+        .join(Reporte, Reporte.id == Solicitud.reporte_id, isouter=True)
+        .where(Solicitud.usuario == usuario_norm)
+    )
+
+    if estado_norm:
+        query = query.where(Solicitud.estado == estado_norm)
+    if reporte_codigo_norm:
+        query = query.where(func.upper(Reporte.codigo).like(f"%{reporte_codigo_norm}%"))
+    if dt_desde:
+        query = query.where(Solicitud.fecha_solicitud >= dt_desde)
+    if dt_hasta:
+        query = query.where(Solicitud.fecha_solicitud <= dt_hasta)
+
+    total = db.execute(
+        select(func.count()).select_from(query.subquery())
+    ).scalar_one()
+
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    page_safe = min(page, total_pages) if total > 0 else 1
+    offset = (page_safe - 1) * page_size
+
+    rows = db.execute(
+        query.order_by(Solicitud.fecha_solicitud.desc()).offset(offset).limit(page_size)
+    ).all()
+
     out: list[SolicitudOut] = []
-    for s in rows:
-        rep = db.get(Reporte, s.reporte_id)
+    for s, rep_codigo, rep_output in rows:
         out.append(SolicitudOut(
             request_id=s.request_id,
-            reporte_codigo=rep.codigo if rep else "UNKNOWN",
+            reporte_codigo=rep_codigo if rep_codigo else "UNKNOWN",
             usuario=s.usuario,
             estado=s.estado,
             progreso=s.progreso,
             mensaje_estado=s.mensaje_estado,
-            ruta_output=s.ruta_output or (rep.ruta_output_base if rep else None),
+            ruta_output=s.ruta_output or rep_output,
             error_detalle=s.error_detalle,
             fecha_solicitud=s.fecha_solicitud,
             fecha_inicio=s.fecha_inicio,
             fecha_fin=s.fecha_fin,
             updated_at=s.updated_at,
         ))
-    return out
+    return SolicitudPageOut(
+        items=out,
+        total=total,
+        page=page_safe,
+        page_size=page_size,
+        total_pages=total_pages,
+    )
 
 
 @app.get("/solicitudes/{request_id}/eventos", response_model=list[EventoOut], tags=["solicitudes"])

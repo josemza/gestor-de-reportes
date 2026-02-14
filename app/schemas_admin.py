@@ -49,6 +49,14 @@ class ReporteAdminOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ReporteAdminPageOut(BaseModel):
+    items: list[ReporteAdminOut]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
 class EquipoCreate(BaseModel):
     nombre: str = Field(min_length=2, max_length=120)
     activo: int = Field(default=1)

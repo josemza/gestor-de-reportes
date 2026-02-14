@@ -49,6 +49,14 @@ class SolicitudOut(BaseModel):
     fecha_fin: datetime | None
     updated_at: datetime
 
+
+class SolicitudPageOut(BaseModel):
+    items: list[SolicitudOut]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
 class EventoOut(BaseModel):
     tipo_evento: str
     detalle: str | None
