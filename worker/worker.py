@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import shlex
 import subprocess
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import os
+import socket
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+import uuid
 
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session
@@ -18,9 +20,9 @@ from sqlalchemy.orm import Session
 load_dotenv()
 
 from app.config import settings
-from app.db import SessionLocal
+from app.db import SessionLocal, engine
 from app import crud
-from app.models import Solicitud, Reporte
+from app.models import Solicitud, Reporte, ReporteLock
 
 
 # ----------------------------
@@ -53,6 +55,10 @@ def setup_logger() -> logging.Logger:
 logger = setup_logger()
 
 
+def ensure_lock_table():
+    ReporteLock.__table__.create(bind=engine, checkfirst=True)
+
+
 # ----------------------------
 # Utilidades
 # ----------------------------
@@ -63,6 +69,12 @@ class RunResult:
     stderr: str
     timed_out: bool
     duration_sec: float
+
+def resolve_worker_id() -> str:
+    env_id = os.getenv("WORKER_ID", "").strip()
+    if env_id:
+        return env_id
+    return f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:6]}"
 
 
 def now_utc() -> datetime:
@@ -166,34 +178,60 @@ def write_request_log(
     return str(log_path)
 
 
-def run_command(command: str | list[str], timeout_sec: int) -> RunResult:
+def run_command(
+    command: str | list[str],
+    timeout_sec: int,
+    heartbeat_interval_sec: int,
+    on_heartbeat: Callable[[], None] | None = None,
+) -> RunResult:
     started = time.perf_counter()
+    process = subprocess.Popen(
+        command,
+        shell=settings.WORKER_USE_SHELL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    heartbeat_interval_sec = max(1, heartbeat_interval_sec)
+    heartbeat_deadline = time.perf_counter() + heartbeat_interval_sec
+
     try:
-        completed = subprocess.run(
-            command,
-            shell=settings.WORKER_USE_SHELL,  # True recomendado para .bat
-            capture_output=True,
-            text=True,
-            timeout=timeout_sec,
-            encoding="utf-8",
-            errors="replace",
-        )
+        while True:
+            elapsed = time.perf_counter() - started
+            remaining_total = timeout_sec - elapsed
+            if remaining_total <= 0:
+                raise subprocess.TimeoutExpired(command, timeout_sec)
+
+            remaining_for_heartbeat = heartbeat_deadline - time.perf_counter()
+            wait_timeout = min(remaining_total, max(0.1, remaining_for_heartbeat))
+
+            try:
+                stdout, stderr = process.communicate(timeout=wait_timeout)
+                dur = time.perf_counter() - started
+                return RunResult(
+                    returncode=process.returncode or 0,
+                    stdout=stdout or "",
+                    stderr=stderr or "",
+                    timed_out=False,
+                    duration_sec=dur,
+                )
+            except subprocess.TimeoutExpired:
+                now = time.perf_counter()
+                if now >= heartbeat_deadline:
+                    if on_heartbeat:
+                        on_heartbeat()
+                    heartbeat_deadline = now + heartbeat_interval_sec
+                continue
+    except subprocess.TimeoutExpired:
+        process.kill()
+        stdout, stderr = process.communicate()
         dur = time.perf_counter() - started
-        return RunResult(
-            returncode=completed.returncode,
-            stdout=completed.stdout or "",
-            stderr=completed.stderr or "",
-            timed_out=False,
-            duration_sec=dur,
-        )
-    except subprocess.TimeoutExpired as ex:
-        dur = time.perf_counter() - started
-        stdout = ex.stdout if isinstance(ex.stdout, str) else (ex.stdout.decode("utf-8", "replace") if ex.stdout else "")
-        stderr = ex.stderr if isinstance(ex.stderr, str) else (ex.stderr.decode("utf-8", "replace") if ex.stderr else "")
         return RunResult(
             returncode=124,  # convención timeout
-            stdout=stdout,
-            stderr=stderr + f"\n[timeout] excedió {timeout_sec} segundos",
+            stdout=stdout or "",
+            stderr=(stderr or "") + f"\n[timeout] excedió {timeout_sec} segundos",
             timed_out=True,
             duration_sec=dur,
         )
@@ -291,15 +329,74 @@ def resolve_output_path_from_reporte(reporte: Reporte) -> str | None:
     return None
 
 
-def process_job(db: Session, job: Solicitud):
-    reporte = db.get(Reporte, job.reporte_id)
-    if not reporte:
-        err = "Reporte asociado no existe."
-        log_path = write_request_log(job.request_id, command_repr="N/A", error=err)
-        mark_error_or_retry(db, job, log_path=log_path, error_msg=err)
-        return
-
+def heartbeat_lock(reporte_id: int, solicitud_id: int):
+    hb_db = SessionLocal()
     try:
+        ok = crud.touch_reporte_lock_heartbeat(
+            db=hb_db,
+            reporte_id=reporte_id,
+            solicitud_id=solicitud_id,
+            worker_id=resolve_worker_id(),
+        )
+        if ok:
+            hb_db.commit()
+        else:
+            hb_db.rollback()
+            logger.warning(
+                "Heartbeat de lock ignorado | reporte_id=%s | solicitud_id=%s | worker_id=%s",
+                reporte_id,
+                solicitud_id,
+                resolve_worker_id(),
+            )
+    except Exception:
+        hb_db.rollback()
+        logger.exception(
+            "Error enviando heartbeat de lock | reporte_id=%s | solicitud_id=%s",
+            reporte_id,
+            solicitud_id,
+        )
+    finally:
+        hb_db.close()
+
+
+def release_lock(reporte_id: int, solicitud_id: int):
+    lock_db = SessionLocal()
+    try:
+        released = crud.release_reporte_lock(
+            db=lock_db,
+            reporte_id=reporte_id,
+            solicitud_id=solicitud_id,
+            worker_id=resolve_worker_id(),
+        )
+        if released:
+            lock_db.commit()
+        else:
+            lock_db.rollback()
+            logger.warning(
+                "No se pudo liberar lock (no pertenece al worker actual o ya no existe) | reporte_id=%s | solicitud_id=%s",
+                reporte_id,
+                solicitud_id,
+            )
+    except Exception:
+        lock_db.rollback()
+        logger.exception(
+            "Error liberando lock | reporte_id=%s | solicitud_id=%s",
+            reporte_id,
+            solicitud_id,
+        )
+    finally:
+        lock_db.close()
+
+
+def process_job(db: Session, job: Solicitud):
+    try:
+        reporte = db.get(Reporte, job.reporte_id)
+        if not reporte:
+            err = "Reporte asociado no existe."
+            log_path = write_request_log(job.request_id, command_repr="N/A", error=err)
+            mark_error_or_retry(db, job, log_path=log_path, error_msg=err)
+            return
+
         update_progress(db, job.id, 20, "Preparando ejecución...")
         command = build_command(reporte, job)
         command_repr = command if isinstance(command, str) else " ".join(command)
@@ -307,7 +404,12 @@ def process_job(db: Session, job: Solicitud):
         logger.info("Ejecutando %s | request_id=%s | cmd=%s", reporte.codigo, job.request_id, command_repr)
         update_progress(db, job.id, 40, "Ejecutando proceso...")
 
-        result = run_command(command, timeout_sec=settings.WORKER_JOB_TIMEOUT_SECONDS)
+        result = run_command(
+            command=command,
+            timeout_sec=settings.WORKER_JOB_TIMEOUT_SECONDS,
+            heartbeat_interval_sec=settings.WORKER_LOCK_HEARTBEAT_SECONDS,
+            on_heartbeat=lambda: heartbeat_lock(job.reporte_id, job.id),
+        )
 
         update_progress(db, job.id, 80, "Finalizando y registrando resultado...")
 
@@ -341,16 +443,23 @@ def process_job(db: Session, job: Solicitud):
         logger.exception("Error no controlado en request_id=%s", job.request_id)
         log_path = write_request_log(job.request_id, command_repr="N/A", error=err)
         mark_error_or_retry(db, job, log_path=log_path, error_msg=err)
+    finally:
+        release_lock(job.reporte_id, job.id)
 
 
 def main():
-    logger.info("Worker iniciado | id=%s | poll=%ss", settings.WORKER_ID, settings.WORKER_POLL_SECONDS)
+    ensure_lock_table()
+    logger.info("Worker iniciado | id=%s | poll=%ss", resolve_worker_id(), settings.WORKER_POLL_SECONDS)
     Path(settings.WORKER_LOG_DIR).mkdir(parents=True, exist_ok=True)
 
     while True:
         db = SessionLocal()
         try:
-            job = crud.take_next_job_atomically(db, settings.WORKER_ID)
+            job = crud.take_next_job_atomically(
+                db,
+                resolve_worker_id(),
+                lock_stale_seconds=settings.WORKER_LOCK_STALE_SECONDS,
+            )
             if job:
                 logger.info("Job tomado | request_id=%s", job.request_id)
                 process_job(db, job)

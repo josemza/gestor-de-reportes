@@ -4,8 +4,9 @@ from pathlib import Path
 import uuid
 from datetime import datetime, timezone
 from sqlalchemy import select, update, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from .models import Reporte, Solicitud, SolicitudEvento
+from .models import Reporte, Solicitud, SolicitudEvento, ReporteLock
 from .schemas import SolicitudCreate
 
 ALLOWED_EXT_DEFAULT = {"csv","xlsx"}
@@ -165,55 +166,151 @@ def take_next_job_atomically_oracle(db: Session, worker_id: str) -> Solicitud | 
 
     return s
 
-def take_next_job_atomically(db: Session, worker_id: str) -> Solicitud | None:
+def take_next_job_atomically(db: Session, worker_id: str, lock_stale_seconds: int = 60) -> Solicitud | None:
     """
     MariaDB-friendly: Usa FOR UPDATE SKIP LOCKED (requiere MariaDB 10.6+)
     y reemplaza ROWID por la clave primaria.
     """
-    # 1) Tomar un ID candidato bloqueándolo
-    # En MariaDB usamos la Primary Key directamente en lugar de ROWID
-    row = db.execute(text("""
-        SELECT SOLICITUD_ID
-        FROM SOLICITUDES_REP_GCI
-        WHERE ESTADO = 'EN_COLA'
-        ORDER BY FECHA_SOLICITUD ASC, SOLICITUD_ID ASC
-        LIMIT 1
-        FOR UPDATE SKIP LOCKED
-    """)).first()
+    max_attempts = 5
 
-    if not row:
-        # Importante: No siempre es necesario rollback si no hubo cambios, 
-        # pero ayuda a liberar cualquier estado de transacción.
-        db.rollback()
-        return None
+    for _ in range(max_attempts):
+        cleanup_stale_reporte_locks(db, stale_after_seconds=lock_stale_seconds)
+        db.commit()
 
-    solicitud_id = int(row.SOLICITUD_ID)
+        now = datetime.now(timezone.utc)
+        alive_since = datetime.fromtimestamp(
+            now.timestamp() - lock_stale_seconds,
+            tz=timezone.utc,
+        )
 
-    # 2) Actualizar estado dentro de la misma transacción
+        row = db.execute(text("""
+            SELECT s.SOLICITUD_ID, s.REPORTE_ID
+            FROM SOLICITUDES_REP_GCI s
+            LEFT JOIN REPORTE_LOCKS_REP_GCI l
+                ON l.REPORTE_ID = s.REPORTE_ID
+               AND l.HEARTBEAT_AT >= :alive_since
+            WHERE s.ESTADO = 'EN_COLA'
+              AND l.REPORTE_ID IS NULL
+            ORDER BY s.FECHA_SOLICITUD ASC, s.SOLICITUD_ID ASC
+            LIMIT 1
+            FOR UPDATE SKIP LOCKED
+        """), {"alive_since": alive_since}).first()
+
+        if not row:
+            db.rollback()
+            return None
+
+        solicitud_id = int(row.SOLICITUD_ID)
+        reporte_id = int(row.REPORTE_ID)
+
+        if not try_acquire_reporte_lock(
+            db=db,
+            reporte_id=reporte_id,
+            solicitud_id=solicitud_id,
+            worker_id=worker_id,
+        ):
+            db.rollback()
+            continue
+
+        db.execute(text(
+            """
+            UPDATE SOLICITUDES_REP_GCI
+            SET ESTADO = 'EJECUTANDO',
+                PROGRESO = 10,
+                MENSAJE_ESTADO = :msg,
+                FECHA_INICIO = :fecha_inicio,
+                UPDATED_AT = :updated_at
+            WHERE SOLICITUD_ID = :sid
+            """
+        ), {
+            "msg": f"Tomada por worker {worker_id}",
+            "fecha_inicio": now,
+            "updated_at": now,
+            "sid": solicitud_id,
+        })
+        add_evento(db, solicitud_id, "ESTADO", "EJECUTANDO", "WORKER")
+        db.commit()
+
+        return db.execute(
+            select(Solicitud).where(Solicitud.id == solicitud_id)
+        ).scalar_one_or_none()
+
+    db.rollback()
+    return None
+
+
+def cleanup_stale_reporte_locks(db: Session, stale_after_seconds: int) -> int:
+    alive_since = datetime.fromtimestamp(
+        datetime.now(timezone.utc).timestamp() - stale_after_seconds,
+        tz=timezone.utc,
+    )
+    result = db.execute(text("""
+        DELETE FROM REPORTE_LOCKS_REP_GCI
+        WHERE HEARTBEAT_AT < :alive_since
+    """), {"alive_since": alive_since})
+    return int(result.rowcount or 0)
+
+
+def try_acquire_reporte_lock(
+    db: Session,
+    reporte_id: int,
+    solicitud_id: int,
+    worker_id: str,
+) -> bool:
     now = datetime.now(timezone.utc)
-    db.execute(text(
-        """
-        UPDATE SOLICITUDES_REP_GCI
-        SET ESTADO = 'EJECUTANDO',
-            PROGRESO = 10,
-            MENSAJE_ESTADO = :msg,
-            FECHA_INICIO = :fecha_inicio,
-            UPDATED_AT = :updated_at
-        WHERE SOLICITUD_ID = :sid
-        """
-    ), {
-        "msg": f"Tomada por worker {worker_id}",
-        "fecha_inicio": now,
-        "updated_at": now,
-        "sid": solicitud_id,
+    lock = ReporteLock(
+        reporte_id=reporte_id,
+        solicitud_id=solicitud_id,
+        worker_id=worker_id,
+        locked_at=now,
+        heartbeat_at=now,
+        updated_at=now,
+    )
+    try:
+        db.add(lock)
+        db.flush()
+        return True
+    except IntegrityError:
+        return False
+
+
+def touch_reporte_lock_heartbeat(
+    db: Session,
+    reporte_id: int,
+    solicitud_id: int,
+    worker_id: str,
+) -> bool:
+    now = datetime.now(timezone.utc)
+    result = db.execute(text("""
+        UPDATE REPORTE_LOCKS_REP_GCI
+        SET HEARTBEAT_AT = :now,
+            UPDATED_AT = :now
+        WHERE REPORTE_ID = :reporte_id
+          AND SOLICITUD_ID = :solicitud_id
+          AND WORKER_ID = :worker_id
+    """), {
+        "now": now,
+        "reporte_id": reporte_id,
+        "solicitud_id": solicitud_id,
+        "worker_id": worker_id,
     })
-    
-    add_evento(db, solicitud_id, "ESTADO", "EJECUTANDO", "WORKER")
-    db.commit()
+    return (result.rowcount or 0) == 1
 
-    # 3) Recuperar el objeto ORM
-    s = db.execute(
-        select(Solicitud).where(Solicitud.id == solicitud_id)
-    ).scalar_one_or_none()
 
-    return s
+def release_reporte_lock(
+    db: Session,
+    reporte_id: int,
+    solicitud_id: int,
+    worker_id: str,
+) -> bool:
+    result = db.execute(text("""
+        DELETE FROM REPORTE_LOCKS_REP_GCI
+        WHERE REPORTE_ID = :reporte_id
+          AND SOLICITUD_ID = :solicitud_id
+          AND WORKER_ID = :worker_id
+    """), {
+        "reporte_id": reporte_id,
+        "solicitud_id": solicitud_id,
+        "worker_id": worker_id,
+    })
+    return (result.rowcount or 0) == 1

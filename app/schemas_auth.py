@@ -31,3 +31,8 @@ class UserOut(BaseModel):
 
 class UserCreateOut(UserOut):
     password_temporal: str
+
+
+class UserPasswordResetOut(BaseModel):
+    detail: str
+    password_temporal: str

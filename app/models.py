@@ -89,3 +89,20 @@ class ReporteEquipo(Base):
     activo: Mapped[int] = mapped_column("ACTIVO", Integer, default=1, nullable=False)
 
     reporte = relationship("Reporte")
+
+
+class ReporteLock(Base):
+    __tablename__ = "REPORTE_LOCKS_REP_GCI"
+
+    reporte_id: Mapped[int] = mapped_column(
+        "REPORTE_ID",
+        ForeignKey("REPORTES_REP_GCI.REPORTE_ID"),
+        primary_key=True,
+    )
+    solicitud_id: Mapped[int] = mapped_column("SOLICITUD_ID", Integer, nullable=False, index=True)
+    worker_id: Mapped[str] = mapped_column("WORKER_ID", String(120), nullable=False, index=True)
+    locked_at: Mapped[datetime] = mapped_column("LOCKED_AT", DateTime, nullable=False)
+    heartbeat_at: Mapped[datetime] = mapped_column("HEARTBEAT_AT", DateTime, nullable=False, index=True)
+    updated_at: Mapped[datetime] = mapped_column("UPDATED_AT", DateTime, nullable=False)
+
+    reporte = relationship("Reporte")

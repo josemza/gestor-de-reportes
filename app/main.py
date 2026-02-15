@@ -26,7 +26,7 @@ from .schemas_admin import (
     EquipoOut,
     EquipoAsignacionIn,
 )
-from .schemas_auth import UserCreateIn, UserCreateOut, UserOut
+from .schemas_auth import UserCreateIn, UserCreateOut, UserOut, UserPasswordResetOut
 from .init_db import init_db
 from .models import Solicitud, SolicitudEvento, Reporte, ReporteCarpetaPermitida, ReporteEquipo
 from .models_auth import Usuario, Rol, UsuarioRol, Equipo, UsuarioEquipo
@@ -614,6 +614,27 @@ def create_usuario(
         username=user.username,
         activo=user.activo,
         roles=sorted(found_role_names),
+        password_temporal=password_temporal,
+    )
+
+
+@app.post("/admin/usuarios/{usuario_id}/reset-password", response_model=UserPasswordResetOut, tags=["admin"])
+def reset_password_usuario(
+    usuario_id: int,
+    db: Session = Depends(get_db),
+    _user=Depends(require_admin_rutas),
+):
+    user = db.get(Usuario, usuario_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no existe")
+
+    password_temporal = settings.DEFAULT_USER_PASSWORD
+    user.password_hash = hash_password(password_temporal)
+    db.add(user)
+    db.commit()
+
+    return UserPasswordResetOut(
+        detail=f"Contraseña restaurada para el usuario '{user.username}'",
         password_temporal=password_temporal,
     )
 

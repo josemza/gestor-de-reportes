@@ -1502,13 +1502,13 @@
     const isAdmin = state.me?.roles?.includes("ADMIN") || state.me?.username === "admin";
     if (!isAdmin) return;
 
-    tb.innerHTML = `<tr><td colspan="4" class="table-empty">Cargando...</td></tr>`;
+    tb.innerHTML = `<tr><td colspan="5" class="table-empty">Cargando...</td></tr>`;
     try {
       const rows = await api("/admin/usuarios");
       state.adminUsuarios = rows || [];
       fillUsuarioEquiposSelect();
       if (!rows?.length) {
-        tb.innerHTML = `<tr><td colspan="4" class="table-empty">No hay usuarios.</td></tr>`;
+        tb.innerHTML = `<tr><td colspan="5" class="table-empty">No hay usuarios.</td></tr>`;
         return;
       }
       tb.innerHTML = rows.map((u) => `
@@ -1517,11 +1517,53 @@
           <td>${esc(u.username)}</td>
           <td>${esc((u.roles || []).join(", "))}</td>
           <td>${u.activo === 1 ? '<span class="status-pill status-OK">ACTIVO</span>' : '<span class="status-pill status-CANCELADO">INACTIVO</span>'}</td>
+          <td>
+            <button class="btn btn--ghost btn--sm btn-reset-password" data-user-id="${esc(u.id)}" data-username="${esc(u.username)}">
+              Restaurar contraseña
+            </button>
+          </td>
         </tr>
       `).join("");
+
+      document.querySelectorAll(".btn-reset-password").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const userId = btn.dataset.userId;
+          const username = btn.dataset.username || `ID ${userId}`;
+          await resetPasswordUsuarioAdmin(userId, username, btn);
+        });
+      });
     } catch (e) {
-      tb.innerHTML = `<tr><td colspan="4" class="table-empty">Error al cargar usuarios.</td></tr>`;
+      tb.innerHTML = `<tr><td colspan="5" class="table-empty">Error al cargar usuarios.</td></tr>`;
       showAlert(`No se pudieron cargar usuarios: ${e.message}`, "err");
+    }
+  }
+
+  async function resetPasswordUsuarioAdmin(userId, username, buttonEl = null) {
+    if (!userId) return;
+    const confirmed = window.confirm(`¿Restaurar contraseña del usuario "${username}"?`);
+    if (!confirmed) return;
+
+    try {
+      if (buttonEl) {
+        buttonEl.disabled = true;
+        buttonEl.dataset.prevText = buttonEl.textContent || "";
+        buttonEl.textContent = "Restaurando...";
+      }
+
+      const out = await api(`/admin/usuarios/${encodeURIComponent(userId)}/reset-password`, {
+        method: "POST",
+      });
+      showAlert(
+        `Contraseña restaurada para ${username}. Temporal: ${out.password_temporal}`,
+        "ok"
+      );
+    } catch (e) {
+      showAlert(`No se pudo restaurar contraseña de ${username}: ${e.message}`, "err");
+    } finally {
+      if (buttonEl) {
+        buttonEl.disabled = false;
+        buttonEl.textContent = buttonEl.dataset.prevText || "Restaurar contraseña";
+      }
     }
   }
 
