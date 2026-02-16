@@ -12,6 +12,7 @@ import socket
 from pathlib import Path
 from typing import Any, Callable
 import uuid
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session
@@ -79,6 +80,27 @@ def resolve_worker_id() -> str:
 
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def is_within_working_hours(now_local: datetime | None = None) -> bool:
+    """
+    Ventana horaria para aceptar nuevas ejecuciones.
+    - start == end: 24 horas (siempre activo)
+    - start < end: ventana del mismo dia [start, end)
+    - start > end: ventana cruzando medianoche (ej. 22 -> 6)
+    """
+    if now_local is None:
+        now_local = datetime.now(ZoneInfo(settings.WORKER_TIMEZONE))
+
+    start = settings.WORKER_ACTIVE_START_HOUR
+    end = settings.WORKER_ACTIVE_END_HOUR
+    hour = now_local.hour
+
+    if start == end:
+        return True
+    if start < end:
+        return start <= hour < end
+    return hour >= start or hour < end
 
 
 def safe_json_loads(raw: str | None) -> dict[str, Any]:
@@ -449,10 +471,33 @@ def process_job(db: Session, job: Solicitud):
 
 def main():
     ensure_lock_table()
-    logger.info("Worker iniciado | id=%s | poll=%ss", resolve_worker_id(), settings.WORKER_POLL_SECONDS)
+    logger.info(
+        "Worker iniciado | id=%s | poll=%ss | horario=%02d:00-%02d:00 | timezone=%s",
+        resolve_worker_id(),
+        settings.WORKER_POLL_SECONDS,
+        settings.WORKER_ACTIVE_START_HOUR,
+        settings.WORKER_ACTIVE_END_HOUR,
+        settings.WORKER_TIMEZONE,
+    )
     Path(settings.WORKER_LOG_DIR).mkdir(parents=True, exist_ok=True)
+    in_schedule_prev: bool | None = None
 
     while True:
+        in_schedule = is_within_working_hours()
+        if in_schedule_prev is None or in_schedule != in_schedule_prev:
+            state = "ACTIVO" if in_schedule else "FUERA_DE_HORARIO"
+            logger.info(
+                "Estado de ventana horaria: %s | rango=%02d:00-%02d:00",
+                state,
+                settings.WORKER_ACTIVE_START_HOUR,
+                settings.WORKER_ACTIVE_END_HOUR,
+            )
+            in_schedule_prev = in_schedule
+
+        if not in_schedule:
+            time.sleep(settings.WORKER_POLL_SECONDS)
+            continue
+
         db = SessionLocal()
         try:
             job = crud.take_next_job_atomically(

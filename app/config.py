@@ -21,6 +21,9 @@ class Settings(BaseModel):
     WORKER_LOCK_STALE_SECONDS: int = Field(default=60)
     WORKER_LOG_DIR: str = Field(default="./runtime/worker_logs")
     WORKER_USE_SHELL: bool = Field(default=True)
+    WORKER_ACTIVE_START_HOUR: int = Field(default=0)
+    WORKER_ACTIVE_END_HOUR: int = Field(default=0)
+    WORKER_TIMEZONE: str = Field(default="America/Lima")
 
     JWT_SECRET_KEY: str = Field(default="CAMBIA_ESTE_SECRETO")
     JWT_ALGORITHM: str = Field(default="HS256")
@@ -62,6 +65,31 @@ class Settings(BaseModel):
             raise ValueError("El valor debe ser >= 1")
         return v
 
+    @field_validator("WORKER_ACTIVE_START_HOUR", "WORKER_ACTIVE_END_HOUR", mode="before")
+    @classmethod
+    def validate_worker_active_hours(cls, v: int) -> int:
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            raise ValueError(f"Hora invalida: {v!r}. Debe ser entero.")
+        if not (0 <= v <= 23):
+            raise ValueError("La hora debe estar entre 0 y 23")
+        return v
+
+    @field_validator("WORKER_TIMEZONE", mode="before")
+    @classmethod
+    def validate_worker_timezone(cls, v: str) -> str:
+        from zoneinfo import ZoneInfo
+
+        tz = str(v).strip()
+        if not tz:
+            raise ValueError("WORKER_TIMEZONE no puede estar vacio")
+        try:
+            ZoneInfo(tz)
+        except Exception:
+            raise ValueError(f"WORKER_TIMEZONE invalida: {tz!r}")
+        return tz
+
     @model_validator(mode="after")
     def validate_lock_windows(self) -> "Settings":
         if self.WORKER_LOCK_STALE_SECONDS <= self.WORKER_LOCK_HEARTBEAT_SECONDS:
@@ -86,6 +114,9 @@ def get_settings() -> Settings:
         "WORKER_LOCK_STALE_SECONDS": _env("WORKER_LOCK_STALE_SECONDS", "60"),
         "WORKER_LOG_DIR": _env("WORKER_LOG_DIR", "./runtime/worker_logs"),
         "WORKER_USE_SHELL": _env("WORKER_USE_SHELL", "true"),
+        "WORKER_ACTIVE_START_HOUR": _env("WORKER_ACTIVE_START_HOUR", "0"),
+        "WORKER_ACTIVE_END_HOUR": _env("WORKER_ACTIVE_END_HOUR", "0"),
+        "WORKER_TIMEZONE": _env("WORKER_TIMEZONE", "America/Lima"),
         "JWT_SECRET_KEY": _env("JWT_SECRET_KEY", "CAMBIA_ESTE_SECRETO"),
         "JWT_ALGORITHM": _env("JWT_ALGORITHM", "HS256"),
         "JWT_ACCESS_TOKEN_MINUTES": _env("JWT_ACCESS_TOKEN_MINUTES", "30"),
