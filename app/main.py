@@ -112,6 +112,24 @@ def _split_columns(raw: str | None) -> list[str]:
     return [x.strip() for x in raw.split(";") if x and x.strip()]
 
 
+def _parse_table_identifier(raw: str) -> tuple[str | None, str]:
+    """
+    Admite identificadores en formato:
+    - TABLA
+    - ESQUEMA.TABLA
+    """
+    value = (raw or "").strip()
+    if not value:
+        raise ValueError("TABLA_BD no puede estar vacío")
+
+    parts = [p.strip() for p in value.split(".")]
+    if len(parts) == 1:
+        return None, parts[0]
+    if len(parts) == 2 and all(parts):
+        return parts[0], parts[1]
+    raise ValueError("TABLA_BD debe tener formato TABLA o ESQUEMA.TABLA")
+
+
 def _is_admin_user(current_user: dict[str, Any]) -> bool:
     return "ADMIN" in current_user["roles"] or current_user["username"] == "admin"
 
@@ -1133,7 +1151,12 @@ def consulta_tablas_search(
 
     bind = db.get_bind()
     try:
-        reflected = Table(whitelist.tabla_bd, MetaData(), autoload_with=bind)
+        schema_name, table_name = _parse_table_identifier(whitelist.tabla_bd)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    try:
+        reflected = Table(table_name, MetaData(), schema=schema_name, autoload_with=bind)
     except NoSuchTableError as e:
         raise HTTPException(status_code=400, detail=f"La tabla física no existe: {whitelist.tabla_bd}") from e
     real_cols = {c.name: c for c in reflected.columns}
