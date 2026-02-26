@@ -1156,7 +1156,13 @@ def consulta_tablas_search(
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     try:
-        reflected = Table(table_name, MetaData(), schema=schema_name, autoload_with=bind)
+        reflected = Table(
+            table_name,
+            MetaData(),
+            schema=schema_name,
+            autoload_with=bind,
+            resolve_fks=False,
+        )
     except NoSuchTableError as e:
         raise HTTPException(status_code=400, detail=f"La tabla física no existe: {whitelist.tabla_bd}") from e
     real_cols = {c.name: c for c in reflected.columns}
@@ -1310,6 +1316,7 @@ def debug_oracle_reflection(
 
     reflection_ok = False
     reflection_error = None
+    reflection_error_type = None
     reflected_columns: list[str] = []
     try:
         reflected = Table(
@@ -1317,10 +1324,12 @@ def debug_oracle_reflection(
             MetaData(),
             schema=effective_schema,
             autoload_with=bind,
+            resolve_fks=False,
         )
         reflection_ok = True
         reflected_columns = [c.name for c in reflected.columns]
     except Exception as e:
+        reflection_error_type = type(e).__name__
         reflection_error = str(e)
 
     return {
@@ -1348,6 +1357,7 @@ def debug_oracle_reflection(
         },
         "reflection": {
             "ok": reflection_ok,
+            "error_type": reflection_error_type,
             "error": reflection_error,
             "columns_count": len(reflected_columns),
             "columns_sample": reflected_columns[:50],
