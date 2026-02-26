@@ -77,3 +77,44 @@ class EquipoOut(BaseModel):
 
 class EquipoAsignacionIn(BaseModel):
     equipo_ids: list[int] = Field(default_factory=list)
+
+
+class TablaConsultaAdminCreate(BaseModel):
+    codigo: str = Field(min_length=2, max_length=100)
+    nombre: str = Field(min_length=2, max_length=255)
+    tabla_bd: str = Field(min_length=2, max_length=255)
+    descripcion: str | None = None
+    columnas_permitidas: str = Field(min_length=1)
+    columnas_resultado: str | None = None
+    activo: int = Field(default=1)
+
+
+class TablaConsultaAdminUpdate(BaseModel):
+    codigo: str | None = Field(default=None, min_length=2, max_length=100)
+    nombre: str | None = Field(default=None, min_length=2, max_length=255)
+    tabla_bd: str | None = Field(default=None, min_length=2, max_length=255)
+    descripcion: str | None = None
+    columnas_permitidas: str | None = None
+    columnas_resultado: str | None = None
+    activo: int | None = None
+
+
+class TablaConsultaAdminOut(BaseModel):
+    id: int
+    codigo: str
+    nombre: str
+    tabla_bd: str
+    descripcion: str | None
+    columnas_permitidas: str
+    columnas_resultado: str | None
+    activo: int
+
+    model_config = {"from_attributes": True}
+
+
+class TablaConsultaAdminPageOut(BaseModel):
+    items: list[TablaConsultaAdminOut]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int

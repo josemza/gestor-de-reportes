@@ -43,3 +43,5 @@ app/conexion/
 runtime/worker_log/
 test/
 arquitectura.txt
+consulta_tablas.md
+metricas.md

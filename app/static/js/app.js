@@ -8,6 +8,10 @@
     adminEquipos: [],
     adminUsuarioEquipoIds: [],
     adminReporteEquipoIds: [],
+    adminTablasConsulta: [],
+    adminTablaConsultaEquipoIds: [],
+    consultaTablasDisponibles: [],
+    consultaTablaResultadoCols: [],
     misCurrentPage: 1,
     misPageSize: 10,
     admRepCurrentPage: 1,
@@ -58,6 +62,7 @@
       '.menu__item[data-tab="tab-admin-rutas"]',
       '.menu__item[data-tab="tab-admin-reportes"]',
       '.menu__item[data-tab="tab-admin-equipos"]',
+      '.menu__item[data-tab="tab-admin-tablas-consulta"]',
     ];
     adminTabs.forEach((selector) => {
       const btn = document.querySelector(selector);
@@ -107,6 +112,16 @@
 
   function closeAdminReporteModal() {
     const modal = $("adminReporteModal");
+    if (modal) modal.style.display = "none";
+  }
+
+  function openConsultaResultadosModal() {
+    const modal = $("consultaResultadosModal");
+    if (modal) modal.style.display = "";
+  }
+
+  function closeConsultaResultadosModal() {
+    const modal = $("consultaResultadosModal");
     if (modal) modal.style.display = "none";
   }
 
@@ -739,11 +754,14 @@
     $("btnOpenNuevaModal")?.addEventListener("click", openNuevaModal);
     $("btnCloseNuevaModal")?.addEventListener("click", closeNuevaModal);
     $("btnCloseNuevaModalBg")?.addEventListener("click", closeNuevaModal);
+    $("btnCloseConsultaResultados")?.addEventListener("click", closeConsultaResultadosModal);
+    $("btnCloseConsultaResultadosBg")?.addEventListener("click", closeConsultaResultadosModal);
 
     document.addEventListener("keydown", (ev) => {
       if (ev.key === "Escape") {
         closeNuevaModal();
         closeAdminReporteModal();
+        closeConsultaResultadosModal();
       }
     });
   }
@@ -753,12 +771,14 @@
     $("apiBaseLabel").textContent = state.apiBase;
     setupLayoutControls();
     setupTabs();
+    setupConsultaTablas();
     setupNuevaSolicitud();
     setupMisSolicitudes();
     setupDetalle();
     setupAdminRutas();
     setupAdminReportes();
     setupAdminEquipos();
+    setupAdminTablasConsulta();
     setupUsuarios();
     setupAuthUI();
 
@@ -790,6 +810,8 @@
       await fetchMisSolicitudes();
       await loadAdminReportes();
       await loadAdminEquiposData();
+      await loadAdminTablasConsulta();
+      await loadConsultaTablasDisponibles();
       await fetchUsuariosAdmin();
     } catch (e) {
       setToken(null);
@@ -1341,6 +1363,7 @@
       fillReporteEquiposSelect();
       renderUsuarioEquiposChecks();
       renderReporteEquiposChecks();
+      renderAdmCtEquiposChecks();
     } catch (e) {
       showAlert(`No se pudo cargar administración de equipos: ${e.message}`, "err");
     }
@@ -1470,6 +1493,429 @@
     $("admReporteEquipo")?.addEventListener("change", loadEquiposReporteSeleccionado);
     $("admReporteEquiposFiltro")?.addEventListener("input", renderReporteEquiposChecks);
     $("btnAdmReporteEquiposGuardar")?.addEventListener("click", saveEquiposReporte);
+  }
+
+  // ---------- Consulta de Tablas ----------
+  function fillConsultaTablasSelect() {
+    const sel = $("ctTabla");
+    if (!sel) return;
+
+    const rows = state.consultaTablasDisponibles || [];
+    if (!rows.length) {
+      sel.innerHTML = `<option value="">No hay tablas permitidas</option>`;
+      return;
+    }
+
+    sel.innerHTML =
+      `<option value="">Seleccione una tabla</option>` +
+      rows.map((r) => `<option value="${esc(r.id)}">${esc(r.codigo)} - ${esc(r.nombre)}</option>`).join("");
+  }
+
+  function getTablaConsultaSeleccionada() {
+    const tablaId = Number($("ctTabla")?.value || 0);
+    return (state.consultaTablasDisponibles || []).find((r) => Number(r.id) === tablaId) || null;
+  }
+
+  function fillConsultaOrderColumns() {
+    const sel = $("ctOrderBy");
+    if (!sel) return;
+    const tabla = getTablaConsultaSeleccionada();
+    const cols = tabla?.columnas_resultado || [];
+    sel.innerHTML =
+      `<option value="">Sin orden</option>` +
+      cols.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
+  }
+
+  function renderConsultaFiltroRow(data = {}) {
+    const wrap = document.createElement("div");
+    wrap.className = "filter-row-builder";
+
+    const tabla = getTablaConsultaSeleccionada();
+    const columnas = tabla?.columnas_permitidas || [];
+
+    const colSel = document.createElement("select");
+    colSel.className = "input-sm";
+    colSel.innerHTML =
+      `<option value="">Columna</option>` +
+      columnas.map((c) => `<option value="${esc(c)}" ${data.column === c ? "selected" : ""}>${esc(c)}</option>`).join("");
+
+    const opSel = document.createElement("select");
+    opSel.className = "input-sm";
+    const ops = [
+      { v: "eq", t: "=" },
+      { v: "neq", t: "!=" },
+      { v: "contains", t: "Contiene" },
+      { v: "startswith", t: "Empieza con" },
+      { v: "endswith", t: "Termina con" },
+      { v: "gt", t: ">" },
+      { v: "gte", t: ">=" },
+      { v: "lt", t: "<" },
+      { v: "lte", t: "<=" },
+      { v: "in", t: "En lista (,)" },
+      { v: "isnull", t: "Es nulo" },
+    ];
+    opSel.innerHTML = ops.map((o) => `<option value="${o.v}" ${data.operator === o.v ? "selected" : ""}>${o.t}</option>`).join("");
+
+    const valInp = document.createElement("input");
+    valInp.className = "input-sm";
+    valInp.type = "text";
+    valInp.placeholder = "Valor";
+    valInp.value = data.value ?? "";
+
+    const btnDel = document.createElement("button");
+    btnDel.type = "button";
+    btnDel.className = "btn btn--ghost btn--sm";
+    btnDel.textContent = "Quitar";
+    btnDel.addEventListener("click", () => wrap.remove());
+
+    wrap.appendChild(colSel);
+    wrap.appendChild(opSel);
+    wrap.appendChild(valInp);
+    wrap.appendChild(btnDel);
+    return wrap;
+  }
+
+  function clearConsultaFiltros() {
+    const wrap = $("ctFiltros");
+    if (!wrap) return;
+    wrap.innerHTML = "";
+  }
+
+  function collectConsultaFiltros() {
+    const wrap = $("ctFiltros");
+    if (!wrap) return [];
+
+    const rows = [];
+    wrap.querySelectorAll(".filter-row-builder").forEach((row) => {
+      const sels = row.querySelectorAll("select");
+      const inp = row.querySelector("input");
+      const column = (sels?.[0]?.value || "").trim();
+      const operator = (sels?.[1]?.value || "eq").trim();
+      const raw = (inp?.value ?? "").toString();
+
+      if (!column) return;
+      let value = raw;
+      if (operator === "in") {
+        value = raw.split(",").map((x) => x.trim()).filter(Boolean);
+      } else if (operator === "isnull") {
+        value = raw ? raw.trim() : null;
+      }
+      rows.push({ column, operator, value });
+    });
+    return rows;
+  }
+
+  function renderConsultaResultados(out) {
+    const thead = $("ctModalTheadResultados");
+    const tbody = $("ctModalTbodyResultados");
+    const hint = $("ctModalResultadosHint");
+    if (!thead || !tbody) return;
+
+    const cols = out?.columns || [];
+    const items = out?.items || [];
+
+    if (!cols.length) {
+      thead.innerHTML = "";
+      tbody.innerHTML = `<tr><td class="table-empty-cell">Sin datos.</td></tr>`;
+      if (hint) hint.textContent = "Sin consulta ejecutada.";
+      return;
+    }
+
+    thead.innerHTML = `<tr>${cols.map((c) => `<th>${esc(c)}</th>`).join("")}</tr>`;
+    if (!items.length) {
+      tbody.innerHTML = `<tr><td colspan="${cols.length}" class="table-empty-cell">No se encontraron registros.</td></tr>`;
+    } else {
+      tbody.innerHTML = items.map((it) => `
+        <tr>
+          ${cols.map((c) => `<td>${esc(it[c] ?? "-")}</td>`).join("")}
+        </tr>
+      `).join("");
+    }
+
+    if (hint) {
+      hint.textContent = out?.truncated
+        ? `Se muestran ${out.total_returned} registros (máximo 20).`
+        : `Se muestran ${out.total_returned} registros.`;
+    }
+  }
+
+  function setConsultaLoading(isLoading) {
+    const loadingWrap = $("ctLoadingWrap");
+    const btnBuscar = $("btnCtBuscar");
+    if (loadingWrap) loadingWrap.style.display = isLoading ? "" : "none";
+    if (btnBuscar) {
+      btnBuscar.disabled = isLoading;
+      btnBuscar.textContent = isLoading ? "Buscando..." : "Buscar";
+    }
+  }
+
+  async function loadConsultaTablasDisponibles() {
+    try {
+      const rows = await api("/consulta-tablas/disponibles");
+      state.consultaTablasDisponibles = rows || [];
+      fillConsultaTablasSelect();
+      fillConsultaOrderColumns();
+      clearConsultaFiltros();
+      renderConsultaResultados(null);
+      if ($("ctInfo")) $("ctInfo").textContent = `${state.consultaTablasDisponibles.length} tabla(s) disponibles`;
+    } catch (e) {
+      showAlert(`No se pudieron cargar tablas permitidas: ${e.message}`, "err");
+    }
+  }
+
+  async function ejecutarConsultaTablas() {
+    const tablaId = Number($("ctTabla")?.value || 0);
+    if (!tablaId) {
+      showAlert("Selecciona una tabla para consultar.", "err");
+      return;
+    }
+
+    const payload = {
+      tabla_id: tablaId,
+      filters: collectConsultaFiltros(),
+      order_by: $("ctOrderBy")?.value || null,
+      order_dir: $("ctOrderDir")?.value || "asc",
+    };
+
+    openConsultaResultadosModal();
+    setConsultaLoading(true);
+    renderConsultaResultados(null);
+
+    try {
+      const out = await api("/consulta-tablas/search", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      renderConsultaResultados(out);
+    } catch (e) {
+      renderConsultaResultados({
+        columns: [],
+        items: [],
+        total_returned: 0,
+        truncated: false,
+      });
+      showAlert(`Error en consulta de tabla: ${e.message}`, "err");
+      const hint = $("ctModalResultadosHint");
+      if (hint) hint.textContent = `Error en la consulta: ${e.message}`;
+    } finally {
+      setConsultaLoading(false);
+    }
+  }
+
+  function setupConsultaTablas() {
+    $("ctTabla")?.addEventListener("change", () => {
+      clearConsultaFiltros();
+      fillConsultaOrderColumns();
+      const wrap = $("ctFiltros");
+      if (wrap) wrap.appendChild(renderConsultaFiltroRow());
+    });
+
+    $("btnCtAddFiltro")?.addEventListener("click", () => {
+      const tabla = getTablaConsultaSeleccionada();
+      if (!tabla) {
+        showAlert("Selecciona una tabla antes de agregar filtros.", "err");
+        return;
+      }
+      $("ctFiltros")?.appendChild(renderConsultaFiltroRow());
+    });
+
+    $("btnCtBuscar")?.addEventListener("click", ejecutarConsultaTablas);
+    $("btnCtLimpiar")?.addEventListener("click", () => {
+      clearConsultaFiltros();
+      $("ctFiltros")?.appendChild(renderConsultaFiltroRow());
+      renderConsultaResultados(null);
+    });
+  }
+
+  // ---------- Admin Tablas Consulta ----------
+  function fillAdmCtTablaEquipoSelect() {
+    const sel = $("admCtTablaEquipo");
+    if (!sel) return;
+
+    const rows = state.adminTablasConsulta || [];
+    if (!rows.length) {
+      sel.innerHTML = `<option value="">No hay tablas</option>`;
+      return;
+    }
+
+    sel.innerHTML =
+      `<option value="">Seleccione tabla</option>` +
+      rows.map((r) => `<option value="${esc(r.id)}">${esc(r.codigo)} - ${esc(r.nombre)}</option>`).join("");
+  }
+
+  function renderAdmCtEquiposChecks() {
+    renderChecks(
+      "admCtEquiposChecks",
+      state.adminEquipos,
+      state.adminTablaConsultaEquipoIds,
+      "adminTablaConsultaEquipoIds",
+      $("admCtEquiposFiltro")?.value || ""
+    );
+  }
+
+  function renderAdminTablasConsultaTable(rows = []) {
+    const tb = $("tbodyAdmCt");
+    if (!tb) return;
+
+    if (!rows.length) {
+      tb.innerHTML = `<tr><td colspan="6" class="table-empty">No hay tablas registradas.</td></tr>`;
+      return;
+    }
+
+    tb.innerHTML = rows.map((r) => `
+      <tr>
+        <td class="mono">${esc(r.id)}</td>
+        <td><input id="admct_codigo_${esc(r.id)}" value="${esc(r.codigo || "")}" /></td>
+        <td><input id="admct_nombre_${esc(r.id)}" value="${esc(r.nombre || "")}" /></td>
+        <td><input id="admct_tabla_${esc(r.id)}" value="${esc(r.tabla_bd || "")}" /></td>
+        <td>
+          <select id="admct_activo_${esc(r.id)}">
+            <option value="1" ${Number(r.activo) === 1 ? "selected" : ""}>ACTIVO</option>
+            <option value="0" ${Number(r.activo) === 0 ? "selected" : ""}>INACTIVO</option>
+          </select>
+        </td>
+        <td>
+          <button class="btn btn--ghost btn--sm btn-admct-save" data-id="${esc(r.id)}">Guardar</button>
+        </td>
+      </tr>
+      <tr>
+        <td colspan="6">
+          <div class="form-grid">
+            <div class="field field--full">
+              <label>Descripción</label>
+              <textarea id="admct_desc_${esc(r.id)}" rows="2">${esc(r.descripcion || "")}</textarea>
+            </div>
+            <div class="field field--full">
+              <label>Columnas permitidas (filtro)</label>
+              <input id="admct_cols_f_${esc(r.id)}" value="${esc(r.columnas_permitidas || "")}" />
+            </div>
+            <div class="field field--full">
+              <label>Columnas resultado</label>
+              <input id="admct_cols_r_${esc(r.id)}" value="${esc(r.columnas_resultado || "")}" />
+            </div>
+          </div>
+        </td>
+      </tr>
+    `).join("");
+
+    document.querySelectorAll(".btn-admct-save").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.dataset.id;
+        const payload = {
+          codigo: $(`admct_codigo_${id}`)?.value?.trim(),
+          nombre: $(`admct_nombre_${id}`)?.value?.trim(),
+          tabla_bd: $(`admct_tabla_${id}`)?.value?.trim(),
+          descripcion: $(`admct_desc_${id}`)?.value?.trim() || null,
+          columnas_permitidas: $(`admct_cols_f_${id}`)?.value?.trim(),
+          columnas_resultado: $(`admct_cols_r_${id}`)?.value?.trim() || null,
+          activo: Number($(`admct_activo_${id}`)?.value || 1),
+        };
+        try {
+          await api(`/admin/tablas-consulta/${encodeURIComponent(id)}`, {
+            method: "PATCH",
+            body: JSON.stringify(payload),
+          });
+          showAlert(`Tabla whitelist ${id} actualizada.`, "ok");
+          await loadAdminTablasConsulta();
+          await loadConsultaTablasDisponibles();
+        } catch (e) {
+          showAlert(`No se pudo actualizar tabla whitelist: ${e.message}`, "err");
+        }
+      });
+    });
+  }
+
+  async function loadAdminTablasConsulta() {
+    const isAdmin = state.me?.roles?.includes("ADMIN") || state.me?.username === "admin";
+    if (!isAdmin) return;
+
+    try {
+      const out = await api("/admin/tablas-consulta?page=1&page_size=500");
+      state.adminTablasConsulta = out?.items || [];
+      renderAdminTablasConsultaTable(state.adminTablasConsulta);
+      fillAdmCtTablaEquipoSelect();
+    } catch (e) {
+      showAlert(`No se pudo cargar whitelist de tablas: ${e.message}`, "err");
+    }
+  }
+
+  async function createAdminTablaConsulta() {
+    const payload = {
+      codigo: $("admCtCodigo")?.value?.trim(),
+      nombre: $("admCtNombre")?.value?.trim(),
+      tabla_bd: $("admCtTablaBd")?.value?.trim(),
+      descripcion: $("admCtDescripcion")?.value?.trim() || null,
+      columnas_permitidas: $("admCtColsPermitidas")?.value?.trim(),
+      columnas_resultado: $("admCtColsResultado")?.value?.trim() || null,
+      activo: Number($("admCtActivo")?.value || 1),
+    };
+
+    if (!payload.codigo || !payload.nombre || !payload.tabla_bd || !payload.columnas_permitidas) {
+      showAlert("Completa código, nombre, tabla BD y columnas permitidas.", "err");
+      return;
+    }
+
+    try {
+      await api("/admin/tablas-consulta", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      $("admCtCodigo").value = "";
+      $("admCtNombre").value = "";
+      $("admCtTablaBd").value = "";
+      $("admCtDescripcion").value = "";
+      $("admCtColsPermitidas").value = "";
+      $("admCtColsResultado").value = "";
+      $("admCtActivo").value = "1";
+      showAlert("Tabla agregada al whitelist.", "ok");
+      await loadAdminTablasConsulta();
+      await loadConsultaTablasDisponibles();
+    } catch (e) {
+      showAlert(`No se pudo crear tabla whitelist: ${e.message}`, "err");
+    }
+  }
+
+  async function loadEquiposTablaConsultaSeleccionada() {
+    const tablaId = $("admCtTablaEquipo")?.value?.trim();
+    if (!tablaId) {
+      state.adminTablaConsultaEquipoIds = [];
+      renderAdmCtEquiposChecks();
+      return;
+    }
+
+    try {
+      const rows = await api(`/admin/tablas-consulta/${encodeURIComponent(tablaId)}/equipos`);
+      state.adminTablaConsultaEquipoIds = (rows || []).map((r) => Number(r.id));
+      renderAdmCtEquiposChecks();
+    } catch (e) {
+      showAlert(`No se pudieron cargar equipos de la tabla: ${e.message}`, "err");
+    }
+  }
+
+  async function saveEquiposTablaConsulta() {
+    const tablaId = $("admCtTablaEquipo")?.value?.trim();
+    if (!tablaId) {
+      showAlert("Selecciona una tabla para asignar equipos.", "err");
+      return;
+    }
+    try {
+      await api(`/admin/tablas-consulta/${encodeURIComponent(tablaId)}/equipos`, {
+        method: "PUT",
+        body: JSON.stringify({ equipo_ids: (state.adminTablaConsultaEquipoIds || []).map(Number) }),
+      });
+      showAlert("Equipos de tabla actualizados.", "ok");
+      await loadConsultaTablasDisponibles();
+    } catch (e) {
+      showAlert(`No se pudo guardar asignación de equipos: ${e.message}`, "err");
+    }
+  }
+
+  function setupAdminTablasConsulta() {
+    $("btnAdmCtCrear")?.addEventListener("click", createAdminTablaConsulta);
+    $("btnAdmCtRefrescar")?.addEventListener("click", loadAdminTablasConsulta);
+    $("admCtTablaEquipo")?.addEventListener("change", loadEquiposTablaConsultaSeleccionada);
+    $("admCtEquiposFiltro")?.addEventListener("input", renderAdmCtEquiposChecks);
+    $("btnAdmCtGuardarEquipos")?.addEventListener("click", saveEquiposTablaConsulta);
   }
 
   // ---------- Usuarios ----------
@@ -1646,6 +2092,8 @@
         await fetchMisSolicitudes();
         await loadAdminReportes();
         await loadAdminEquiposData();
+        await loadAdminTablasConsulta();
+        await loadConsultaTablasDisponibles();
         await fetchUsuariosAdmin();
       } catch (err) {
         $("loginError").style.display = "";

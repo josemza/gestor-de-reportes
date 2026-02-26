@@ -1,18 +1,32 @@
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, Depends, HTTPException, Query, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from sqlalchemy import select, delete, func
+from sqlalchemy import select, delete, func, Table, MetaData
+from sqlalchemy.exc import NoSuchTableError
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.sqltypes import String, Text, Date, DateTime, Integer, Numeric, Float, Boolean
 
 from .config import settings
 from .db import get_db
 from .deps_auth import require_admin_rutas, get_current_user
 from . import crud
-from .schemas import HealthOut, ReporteOut, ReporteCreate, SolicitudCreate, SolicitudOut, SolicitudPageOut, EventoOut
+from .schemas import (
+    HealthOut,
+    ReporteOut,
+    ReporteCreate,
+    SolicitudCreate,
+    SolicitudOut,
+    SolicitudPageOut,
+    EventoOut,
+    TablaConsultaDisponibleOut,
+    TableQueryIn,
+    TableQueryOut,
+)
 from .schemas_admin import (
     CarpetaPermitidaCreate,
     CarpetaPermitidaOut,
@@ -25,10 +39,22 @@ from .schemas_admin import (
     EquipoUpdate,
     EquipoOut,
     EquipoAsignacionIn,
+    TablaConsultaAdminCreate,
+    TablaConsultaAdminOut,
+    TablaConsultaAdminPageOut,
+    TablaConsultaAdminUpdate,
 )
 from .schemas_auth import UserCreateIn, UserCreateOut, UserOut, UserPasswordResetOut
 from .init_db import init_db
-from .models import Solicitud, SolicitudEvento, Reporte, ReporteCarpetaPermitida, ReporteEquipo
+from .models import (
+    Solicitud,
+    SolicitudEvento,
+    Reporte,
+    ReporteCarpetaPermitida,
+    ReporteEquipo,
+    TablaConsultaPermitida,
+    TablaConsultaEquipo,
+)
 from .models_auth import Usuario, Rol, UsuarioRol, Equipo, UsuarioEquipo
 from .security import hash_password
 from .routers.auth import router as auth_router
@@ -78,6 +104,88 @@ def health(request: Request):
         utc_time=datetime.now(timezone.utc).isoformat(),
         client_ip=request.client.host if request.client else "unknown",
     )
+
+
+def _split_columns(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    return [x.strip() for x in raw.split(";") if x and x.strip()]
+
+
+def _is_admin_user(current_user: dict[str, Any]) -> bool:
+    return "ADMIN" in current_user["roles"] or current_user["username"] == "admin"
+
+
+def _resolve_allowed_tabla(
+    db: Session,
+    tabla_id: int,
+    current_user: dict[str, Any],
+) -> TablaConsultaPermitida | None:
+    if _is_admin_user(current_user):
+        return db.get(TablaConsultaPermitida, tabla_id)
+
+    return db.execute(
+        select(TablaConsultaPermitida)
+        .join(TablaConsultaEquipo, TablaConsultaEquipo.tabla_id == TablaConsultaPermitida.id)
+        .join(UsuarioEquipo, UsuarioEquipo.equipo_id == TablaConsultaEquipo.equipo_id)
+        .where(
+            TablaConsultaPermitida.id == tabla_id,
+            TablaConsultaPermitida.activo == 1,
+            TablaConsultaEquipo.activo == 1,
+            UsuarioEquipo.activo == 1,
+            UsuarioEquipo.usuario_id == current_user["id"],
+        )
+    ).scalar_one_or_none()
+
+
+def _column_kind(col_type: Any) -> str:
+    if isinstance(col_type, (String, Text)):
+        return "str"
+    if isinstance(col_type, (Integer, Numeric, Float)):
+        return "num"
+    if isinstance(col_type, (DateTime, Date)):
+        return "date"
+    if isinstance(col_type, Boolean):
+        return "bool"
+    return "str"
+
+
+def _parse_filter_value(raw: Any, col_type: Any) -> Any:
+    kind = _column_kind(col_type)
+    if raw is None:
+        return None
+
+    if kind == "num":
+        if isinstance(raw, (int, float)):
+            return raw
+        try:
+            text = str(raw).strip()
+            return float(text) if "." in text else int(text)
+        except Exception as e:
+            raise ValueError(f"Valor numérico inválido: {raw!r}") from e
+
+    if kind == "bool":
+        if isinstance(raw, bool):
+            return raw
+        txt = str(raw).strip().lower()
+        if txt in {"1", "true", "t", "yes", "y"}:
+            return True
+        if txt in {"0", "false", "f", "no", "n"}:
+            return False
+        raise ValueError(f"Valor booleano inválido: {raw!r}")
+
+    if kind == "date":
+        if isinstance(raw, (datetime, date)):
+            return raw
+        txt = str(raw).strip()
+        try:
+            if "T" in txt:
+                return datetime.fromisoformat(txt)
+            return date.fromisoformat(txt)
+        except Exception as e:
+            raise ValueError(f"Valor de fecha inválido: {raw!r}. Use YYYY-MM-DD o ISO datetime.") from e
+
+    return str(raw)
 
 
 @app.get("/reportes", response_model=list[ReporteOut], tags=["reportes"])
@@ -781,3 +889,353 @@ def set_equipos_reporte(
         db.add(ReporteEquipo(reporte_id=reporte_id, equipo_id=equipo_id, activo=1))
     db.commit()
     return {"detail": "Equipos del reporte actualizados correctamente"}
+
+
+@app.get("/admin/tablas-consulta", response_model=TablaConsultaAdminPageOut, tags=["admin"])
+def list_tablas_consulta_admin(
+    q: str = Query("", max_length=200),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=500),
+    db: Session = Depends(get_db),
+    _user=Depends(require_admin_rutas),
+):
+    q_norm = (q or "").strip().upper()
+    query = select(TablaConsultaPermitida)
+    if q_norm:
+        query = query.where(
+            func.upper(TablaConsultaPermitida.codigo).like(f"%{q_norm}%")
+            | func.upper(TablaConsultaPermitida.nombre).like(f"%{q_norm}%")
+            | func.upper(TablaConsultaPermitida.tabla_bd).like(f"%{q_norm}%")
+        )
+
+    total = db.execute(select(func.count()).select_from(query.subquery())).scalar_one()
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    page_safe = min(page, total_pages) if total > 0 else 1
+    offset = (page_safe - 1) * page_size
+
+    items = db.execute(
+        query.order_by(TablaConsultaPermitida.codigo.asc()).offset(offset).limit(page_size)
+    ).scalars().all()
+
+    return TablaConsultaAdminPageOut(
+        items=items,
+        total=total,
+        page=page_safe,
+        page_size=page_size,
+        total_pages=total_pages,
+    )
+
+
+@app.post("/admin/tablas-consulta", response_model=TablaConsultaAdminOut, tags=["admin"])
+def create_tabla_consulta_admin(
+    payload: TablaConsultaAdminCreate,
+    db: Session = Depends(get_db),
+    _user=Depends(require_admin_rutas),
+):
+    codigo = payload.codigo.strip().upper()
+    nombre = payload.nombre.strip()
+    tabla_bd = payload.tabla_bd.strip()
+    columnas_permitidas = payload.columnas_permitidas.strip()
+    columnas_resultado = payload.columnas_resultado.strip() if payload.columnas_resultado else None
+
+    if not _split_columns(columnas_permitidas):
+        raise HTTPException(status_code=400, detail="Debes indicar al menos una columna permitida")
+
+    dup_codigo = db.execute(
+        select(TablaConsultaPermitida).where(TablaConsultaPermitida.codigo == codigo)
+    ).scalar_one_or_none()
+    if dup_codigo:
+        raise HTTPException(status_code=409, detail="Ya existe una tabla registrada con ese código")
+
+    dup_tabla = db.execute(
+        select(TablaConsultaPermitida).where(TablaConsultaPermitida.tabla_bd == tabla_bd)
+    ).scalar_one_or_none()
+    if dup_tabla:
+        raise HTTPException(status_code=409, detail="Esa tabla física ya está registrada en el whitelist")
+
+    now = datetime.now(timezone.utc)
+    row = TablaConsultaPermitida(
+        codigo=codigo,
+        nombre=nombre,
+        tabla_bd=tabla_bd,
+        descripcion=payload.descripcion,
+        columnas_permitidas=columnas_permitidas,
+        columnas_resultado=columnas_resultado,
+        activo=1 if payload.activo else 0,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@app.patch("/admin/tablas-consulta/{tabla_id}", response_model=TablaConsultaAdminOut, tags=["admin"])
+def update_tabla_consulta_admin(
+    tabla_id: int,
+    payload: TablaConsultaAdminUpdate,
+    db: Session = Depends(get_db),
+    _user=Depends(require_admin_rutas),
+):
+    row = db.get(TablaConsultaPermitida, tabla_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Tabla del whitelist no existe")
+
+    if payload.codigo is not None:
+        codigo = payload.codigo.strip().upper()
+        dup = db.execute(
+            select(TablaConsultaPermitida).where(
+                TablaConsultaPermitida.codigo == codigo,
+                TablaConsultaPermitida.id != tabla_id,
+            )
+        ).scalar_one_or_none()
+        if dup:
+            raise HTTPException(status_code=409, detail="Ya existe otra tabla con ese código")
+        row.codigo = codigo
+
+    if payload.nombre is not None:
+        row.nombre = payload.nombre.strip()
+
+    if payload.tabla_bd is not None:
+        tabla_bd = payload.tabla_bd.strip()
+        dup = db.execute(
+            select(TablaConsultaPermitida).where(
+                TablaConsultaPermitida.tabla_bd == tabla_bd,
+                TablaConsultaPermitida.id != tabla_id,
+            )
+        ).scalar_one_or_none()
+        if dup:
+            raise HTTPException(status_code=409, detail="Esa tabla física ya está registrada")
+        row.tabla_bd = tabla_bd
+
+    if payload.descripcion is not None:
+        row.descripcion = payload.descripcion
+
+    if payload.columnas_permitidas is not None:
+        cols = payload.columnas_permitidas.strip()
+        if not _split_columns(cols):
+            raise HTTPException(status_code=400, detail="Debes indicar al menos una columna permitida")
+        row.columnas_permitidas = cols
+
+    if payload.columnas_resultado is not None:
+        row.columnas_resultado = payload.columnas_resultado.strip() if payload.columnas_resultado else None
+
+    if payload.activo is not None:
+        row.activo = 1 if payload.activo else 0
+
+    row.updated_at = datetime.now(timezone.utc)
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@app.get("/admin/tablas-consulta/{tabla_id}/equipos", response_model=list[EquipoOut], tags=["admin"])
+def get_equipos_tabla_consulta(
+    tabla_id: int,
+    db: Session = Depends(get_db),
+    _user=Depends(require_admin_rutas),
+):
+    row = db.get(TablaConsultaPermitida, tabla_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Tabla del whitelist no existe")
+
+    return db.execute(
+        select(Equipo)
+        .join(TablaConsultaEquipo, TablaConsultaEquipo.equipo_id == Equipo.id)
+        .where(TablaConsultaEquipo.tabla_id == tabla_id, TablaConsultaEquipo.activo == 1)
+        .order_by(Equipo.nombre.asc())
+    ).scalars().all()
+
+
+@app.put("/admin/tablas-consulta/{tabla_id}/equipos", tags=["admin"])
+def set_equipos_tabla_consulta(
+    tabla_id: int,
+    payload: EquipoAsignacionIn,
+    db: Session = Depends(get_db),
+    _user=Depends(require_admin_rutas),
+):
+    row = db.get(TablaConsultaPermitida, tabla_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Tabla del whitelist no existe")
+
+    ids = sorted(set(payload.equipo_ids))
+    if ids:
+        found = db.execute(select(Equipo.id).where(Equipo.id.in_(ids), Equipo.activo == 1)).scalars().all()
+        if len(found) != len(ids):
+            raise HTTPException(status_code=400, detail="Uno o más equipos no existen o están inactivos")
+
+    db.execute(delete(TablaConsultaEquipo).where(TablaConsultaEquipo.tabla_id == tabla_id))
+    for equipo_id in ids:
+        db.add(TablaConsultaEquipo(tabla_id=tabla_id, equipo_id=equipo_id, activo=1))
+    db.commit()
+    return {"detail": "Equipos de la tabla actualizados correctamente"}
+
+
+@app.get("/consulta-tablas/disponibles", response_model=list[TablaConsultaDisponibleOut], tags=["consulta-tablas"])
+def list_tablas_consulta_disponibles(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    if _is_admin_user(current_user):
+        rows = db.execute(
+            select(TablaConsultaPermitida)
+            .where(TablaConsultaPermitida.activo == 1)
+            .order_by(TablaConsultaPermitida.nombre.asc())
+        ).scalars().all()
+    else:
+        rows = db.execute(
+            select(TablaConsultaPermitida)
+            .join(TablaConsultaEquipo, TablaConsultaEquipo.tabla_id == TablaConsultaPermitida.id)
+            .join(UsuarioEquipo, UsuarioEquipo.equipo_id == TablaConsultaEquipo.equipo_id)
+            .where(
+                TablaConsultaPermitida.activo == 1,
+                TablaConsultaEquipo.activo == 1,
+                UsuarioEquipo.activo == 1,
+                UsuarioEquipo.usuario_id == current_user["id"],
+            )
+            .order_by(TablaConsultaPermitida.nombre.asc())
+        ).scalars().all()
+        unique: dict[int, TablaConsultaPermitida] = {r.id: r for r in rows}
+        rows = list(unique.values())
+
+    return [
+        TablaConsultaDisponibleOut(
+            id=r.id,
+            codigo=r.codigo,
+            nombre=r.nombre,
+            tabla_bd=r.tabla_bd,
+            descripcion=r.descripcion,
+            columnas_permitidas=_split_columns(r.columnas_permitidas),
+            columnas_resultado=_split_columns(r.columnas_resultado) or _split_columns(r.columnas_permitidas),
+        )
+        for r in rows
+    ]
+
+
+@app.post("/consulta-tablas/search", response_model=TableQueryOut, tags=["consulta-tablas"])
+def consulta_tablas_search(
+    payload: TableQueryIn,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    whitelist = _resolve_allowed_tabla(db, payload.tabla_id, current_user)
+    if not whitelist or whitelist.activo != 1:
+        raise HTTPException(status_code=404, detail="La tabla no existe o no está permitida para tu usuario")
+
+    allowed_filter_cols_list = _split_columns(whitelist.columnas_permitidas)
+    allowed_filter_cols = set(allowed_filter_cols_list)
+    if not allowed_filter_cols_list:
+        raise HTTPException(status_code=400, detail="La tabla no tiene columnas permitidas configuradas")
+
+    result_cols = _split_columns(whitelist.columnas_resultado) or allowed_filter_cols_list
+
+    bind = db.get_bind()
+    try:
+        reflected = Table(whitelist.tabla_bd, MetaData(), autoload_with=bind)
+    except NoSuchTableError as e:
+        raise HTTPException(status_code=400, detail=f"La tabla física no existe: {whitelist.tabla_bd}") from e
+    real_cols = {c.name: c for c in reflected.columns}
+
+    missing_filter = [c for c in allowed_filter_cols if c not in real_cols]
+    if missing_filter:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Columnas permitidas inexistentes en tabla física: {', '.join(sorted(missing_filter))}",
+        )
+
+    missing_result = [c for c in result_cols if c not in real_cols]
+    if missing_result:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Columnas de resultado inexistentes en tabla física: {', '.join(sorted(missing_result))}",
+        )
+
+    conditions = []
+    for f in payload.filters:
+        col_name = f.column.strip()
+        if col_name not in allowed_filter_cols:
+            raise HTTPException(status_code=400, detail=f"Filtro no permitido para columna: {col_name}")
+
+        col = real_cols[col_name]
+        op = f.operator
+        value = f.value
+
+        if op == "isnull":
+            is_null = True if value is None else str(value).strip().lower() in {"1", "true", "t", "yes"}
+            conditions.append(col.is_(None) if is_null else col.is_not(None))
+            continue
+
+        if op == "in":
+            if not isinstance(value, list) or not value:
+                raise HTTPException(status_code=400, detail=f"El operador 'in' requiere una lista no vacía en {col_name}")
+            parsed = [_parse_filter_value(v, col.type) for v in value]
+            conditions.append(col.in_(parsed))
+            continue
+
+        if op in {"contains", "startswith", "endswith"}:
+            if _column_kind(col.type) != "str":
+                raise HTTPException(status_code=400, detail=f"El operador {op} solo aplica a columnas de texto")
+            txt = str(value if value is not None else "").strip()
+            if not txt:
+                raise HTTPException(status_code=400, detail=f"El filtro {op} requiere un valor no vacío")
+            if op == "contains":
+                conditions.append(col.ilike(f"%{txt}%"))
+            elif op == "startswith":
+                conditions.append(col.ilike(f"{txt}%"))
+            else:
+                conditions.append(col.ilike(f"%{txt}"))
+            continue
+
+        parsed_value = _parse_filter_value(value, col.type)
+        if op == "eq":
+            conditions.append(col == parsed_value)
+        elif op == "neq":
+            conditions.append(col != parsed_value)
+        elif op == "gt":
+            conditions.append(col > parsed_value)
+        elif op == "gte":
+            conditions.append(col >= parsed_value)
+        elif op == "lt":
+            conditions.append(col < parsed_value)
+        elif op == "lte":
+            conditions.append(col <= parsed_value)
+        else:
+            raise HTTPException(status_code=400, detail=f"Operador no soportado: {op}")
+
+    selected_cols = [real_cols[c].label(c) for c in result_cols]
+    query = select(*selected_cols)
+    if conditions:
+        query = query.where(*conditions)
+
+    if payload.order_by:
+        order_name = payload.order_by.strip()
+        if order_name and order_name in result_cols:
+            order_col = real_cols[order_name]
+            query = query.order_by(order_col.desc() if payload.order_dir == "desc" else order_col.asc())
+
+    rows = db.execute(query.limit(21)).mappings().all()
+    truncated = len(rows) > 20
+    rows = rows[:20]
+
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        item: dict[str, Any] = {}
+        for c in result_cols:
+            v = row.get(c)
+            if isinstance(v, (datetime, date)):
+                item[c] = v.isoformat()
+            else:
+                item[c] = v
+        items.append(item)
+
+    return TableQueryOut(
+        tabla_id=whitelist.id,
+        tabla_codigo=whitelist.codigo,
+        tabla_nombre=whitelist.nombre,
+        columns=result_cols,
+        items=items,
+        total_returned=len(items),
+        truncated=truncated,
+    )

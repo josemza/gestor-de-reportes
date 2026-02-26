@@ -78,6 +78,17 @@
           </svg>
           <span class="menu__label">Detalle</span>
         </button>
+        <button class="menu__item" data-tab="tab-consulta-tablas">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M4 5h16"></path>
+            <path d="M4 12h16"></path>
+            <path d="M4 19h16"></path>
+            <circle cx="8" cy="5" r="1"></circle>
+            <circle cx="16" cy="12" r="1"></circle>
+            <circle cx="10" cy="19" r="1"></circle>
+          </svg>
+          <span class="menu__label">Consulta Tablas</span>
+        </button>
         <button class="menu__item" data-tab="tab-admin-rutas">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
@@ -101,6 +112,16 @@
             <path d="M12 20a5 5 0 0 1 10 0"></path>
           </svg>
           <span class="menu__label">Admin Equipos</span>
+        </button>
+        <button class="menu__item" data-tab="tab-admin-tablas-consulta">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="4" width="18" height="16" rx="2"></rect>
+            <path d="M3 10h18"></path>
+            <path d="M8 14h.01"></path>
+            <path d="M12 14h.01"></path>
+            <path d="M16 14h.01"></path>
+          </svg>
+          <span class="menu__label">Admin Tablas</span>
         </button>
         <button class="menu__item" data-tab="tab-usuarios">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -252,6 +273,54 @@
             <div class="result-empty">No hay eventos.</div>
           </div>
         </div>
+      </section>
+
+      <section id="tab-consulta-tablas" class="tab">
+        <div class="card">
+          <div class="card__header">
+            <h3>Consulta de tablas</h3>
+            <p class="muted">Consulta información con filtros. Máximo 20 registros por búsqueda.</p>
+          </div>
+
+          <div class="form-grid">
+            <div class="field">
+              <label for="ctTabla">Tabla permitida</label>
+              <select id="ctTabla">
+                <option value="">Seleccione una tabla</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="ctOrderBy">Ordenar por</label>
+              <select id="ctOrderBy">
+                <option value="">Sin orden</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="ctOrderDir">Dirección</label>
+              <select id="ctOrderDir">
+                <option value="asc">Ascendente</option>
+                <option value="desc">Descendente</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="card mt-4">
+            <div class="card__header card__header--between">
+              <div>
+                <h3>Filtros</h3>
+                <p class="muted">Puedes agregar múltiples condiciones.</p>
+              </div>
+              <button type="button" id="btnCtAddFiltro" class="btn btn--ghost btn--sm">Agregar filtro</button>
+            </div>
+            <div id="ctFiltros" class="filter-builder"></div>
+            <div class="inline-controls mt-4">
+              <button type="button" id="btnCtBuscar" class="btn btn--primary btn--inline">Buscar</button>
+              <button type="button" id="btnCtLimpiar" class="btn btn--ghost btn--inline">Limpiar</button>
+              <span id="ctInfo" class="muted text-sm"></span>
+            </div>
+          </div>
+        </div>
+
       </section>
 
       <!-- TAB: ADMIN-->
@@ -502,6 +571,102 @@
         </div>
       </section>
 
+      <section id="tab-admin-tablas-consulta" class="tab">
+        <div class="card">
+          <div class="card__header">
+            <h3>Whitelist de tablas consultables</h3>
+            <p class="muted">Define qué tablas son consultables y qué columnas se pueden filtrar/ver.</p>
+          </div>
+          <div class="form-grid">
+            <div class="field">
+              <label for="admCtCodigo">Código</label>
+              <input id="admCtCodigo" type="text" placeholder="TAB_CLIENTES" />
+            </div>
+            <div class="field">
+              <label for="admCtNombre">Nombre</label>
+              <input id="admCtNombre" type="text" placeholder="Clientes" />
+            </div>
+            <div class="field field--full">
+              <label for="admCtTablaBd">Tabla física (BD)</label>
+              <input id="admCtTablaBd" type="text" placeholder="CLIENTES_GCI" />
+            </div>
+            <div class="field field--full">
+              <label for="admCtDescripcion">Descripción</label>
+              <textarea id="admCtDescripcion" rows="2"></textarea>
+            </div>
+            <div class="field field--full">
+              <label for="admCtColsPermitidas">Columnas permitidas para filtro (separadas por ;)</label>
+              <input id="admCtColsPermitidas" type="text" placeholder="CLIENTE_ID;NOMBRE;ESTADO;FECHA_ALTA" />
+            </div>
+            <div class="field field--full">
+              <label for="admCtColsResultado">Columnas de resultado (separadas por ;, opcional)</label>
+              <input id="admCtColsResultado" type="text" placeholder="CLIENTE_ID;NOMBRE;ESTADO" />
+            </div>
+            <div class="field">
+              <label for="admCtActivo">Activo</label>
+              <select id="admCtActivo">
+                <option value="1">Sí</option>
+                <option value="0">No</option>
+              </select>
+            </div>
+            <div class="field field--full">
+              <button type="button" id="btnAdmCtCrear" class="btn btn--primary btn--inline">Crear tabla en whitelist</button>
+              <button type="button" id="btnAdmCtRefrescar" class="btn btn--ghost btn--inline">Recargar</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card__header">
+            <h3>Tablas registradas</h3>
+            <p class="muted">Edita datos y asigna equipos permitidos.</p>
+          </div>
+          <div class="table-wrap">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Código</th>
+                  <th>Nombre</th>
+                  <th>Tabla BD</th>
+                  <th>Activo</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody id="tbodyAdmCt">
+                <tr><td colspan="6" class="table-empty">Sin datos.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card__header">
+            <h3>Asignación de equipos a tablas</h3>
+            <p class="muted">Solo usuarios de estos equipos podrán consultar la tabla.</p>
+          </div>
+          <div class="form-grid">
+            <div class="field">
+              <label for="admCtTablaEquipo">Tabla</label>
+              <select id="admCtTablaEquipo">
+                <option value="">Seleccione tabla</option>
+              </select>
+            </div>
+            <div class="field field--full">
+              <label for="admCtEquiposFiltro">Buscar equipo</label>
+              <input id="admCtEquiposFiltro" type="text" placeholder="Filtrar equipos..." />
+            </div>
+            <div class="field field--full">
+              <label>Equipos</label>
+              <div id="admCtEquiposChecks" class="checks-grid"></div>
+            </div>
+            <div class="field field--full">
+              <button type="button" id="btnAdmCtGuardarEquipos" class="btn btn--primary btn--inline">Guardar asignación</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section id="tab-usuarios" class="tab">
         <div class="card">
           <div class="card__header">
@@ -673,6 +838,35 @@
 
         <div id="resultNueva" class="result-box mt-4">
           <span class="muted text-sm">Listo para enviar</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="consultaResultadosModal" class="modal" style="display:none;">
+    <div class="modal__backdrop" id="btnCloseConsultaResultadosBg"></div>
+    <div class="modal__panel modal__panel--wide">
+      <div class="card card--compact">
+        <div class="card__header card__header--between">
+          <div>
+            <h3>Resultado de consulta</h3>
+            <p id="ctModalResultadosHint" class="muted">Sin consulta ejecutada.</p>
+          </div>
+          <button type="button" id="btnCloseConsultaResultados" class="btn btn--ghost btn--sm">Cerrar</button>
+        </div>
+
+        <div id="ctLoadingWrap" class="consulta-loading" style="display:none;">
+          <div class="spinner"></div>
+          <span>Buscando registros...</span>
+        </div>
+
+        <div class="table-wrap">
+          <table class="table">
+            <thead id="ctModalTheadResultados"></thead>
+            <tbody id="ctModalTbodyResultados">
+              <tr><td class="table-empty">Sin datos.</td></tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </div>

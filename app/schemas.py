@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 class HealthOut(BaseModel):
@@ -64,3 +64,36 @@ class EventoOut(BaseModel):
     created_at: datetime
     
     model_config = {"from_attributes": True}
+
+
+class TablaConsultaDisponibleOut(BaseModel):
+    id: int
+    codigo: str
+    nombre: str
+    tabla_bd: str
+    descripcion: str | None
+    columnas_permitidas: list[str]
+    columnas_resultado: list[str]
+
+
+class TableFilterIn(BaseModel):
+    column: str = Field(min_length=1, max_length=255)
+    operator: Literal["eq", "neq", "contains", "startswith", "endswith", "gt", "gte", "lt", "lte", "in", "isnull"]
+    value: Any = None
+
+
+class TableQueryIn(BaseModel):
+    tabla_id: int
+    filters: list[TableFilterIn] = Field(default_factory=list)
+    order_by: str | None = Field(default=None, max_length=255)
+    order_dir: Literal["asc", "desc"] = "asc"
+
+
+class TableQueryOut(BaseModel):
+    tabla_id: int
+    tabla_codigo: str
+    tabla_nombre: str
+    columns: list[str]
+    items: list[dict[str, Any]]
+    total_returned: int
+    truncated: bool

@@ -106,3 +106,30 @@ class ReporteLock(Base):
     updated_at: Mapped[datetime] = mapped_column("UPDATED_AT", DateTime, nullable=False)
 
     reporte = relationship("Reporte")
+
+
+class TablaConsultaPermitida(Base):
+    __tablename__ = "TABLAS_CONSULTA_REP_GCI"
+
+    id: Mapped[int] = mapped_column("TABLA_ID", Integer, Identity(start=1), primary_key=True)
+    codigo: Mapped[str] = mapped_column("CODIGO", String(100), unique=True, nullable=False, index=True)
+    nombre: Mapped[str] = mapped_column("NOMBRE", String(255), nullable=False)
+    tabla_bd: Mapped[str] = mapped_column("TABLA_BD", String(255), unique=True, nullable=False, index=True)
+    descripcion: Mapped[str | None] = mapped_column("DESCRIPCION", Text, nullable=True)
+    columnas_permitidas: Mapped[str] = mapped_column("COLUMNAS_PERMITIDAS", Text, nullable=False)
+    columnas_resultado: Mapped[str | None] = mapped_column("COLUMNAS_RESULTADO", Text, nullable=True)
+    activo: Mapped[int] = mapped_column("ACTIVO", Integer, default=1, nullable=False)
+    created_at: Mapped[datetime] = mapped_column("CREATED_AT", DateTime, default=datetime.now(timezone.utc), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column("UPDATED_AT", DateTime, default=datetime.now(timezone.utc), nullable=False)
+
+
+class TablaConsultaEquipo(Base):
+    __tablename__ = "TABLA_CONSULTA_EQUIPO_REP_GCI"
+    __table_args__ = (UniqueConstraint("TABLA_ID", "EQUIPO_ID", name="UQ_TABLA_CONSULTA_EQUIPO"),)
+
+    id: Mapped[int] = mapped_column("TABLA_CONSULTA_EQUIPO_ID", Integer, Identity(start=1), primary_key=True)
+    tabla_id: Mapped[int] = mapped_column("TABLA_ID", ForeignKey("TABLAS_CONSULTA_REP_GCI.TABLA_ID"), nullable=False, index=True)
+    equipo_id: Mapped[int] = mapped_column("EQUIPO_ID", ForeignKey("EQUIPOS_REP_GCI.EQUIPO_ID"), nullable=False, index=True)
+    activo: Mapped[int] = mapped_column("ACTIVO", Integer, default=1, nullable=False)
+
+    tabla = relationship("TablaConsultaPermitida")
