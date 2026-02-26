@@ -148,6 +148,16 @@ def _oracle_sa_normalize_identifier(name: str | None, bind: Any) -> str | None:
     return stripped
 
 
+def _column_key(name: str) -> str:
+    """
+    Llave de comparación de columnas tolerante a:
+    - mayúsculas/minúsculas
+    - comillas dobles alrededor
+    - espacios extras
+    """
+    return name.strip().strip('"').upper()
+
+
 def _is_admin_user(current_user: dict[str, Any]) -> bool:
     return "ADMIN" in current_user["roles"] or current_user["username"] == "admin"
 
@@ -1163,10 +1173,10 @@ def consulta_tablas_search(
     allowed_filter_cols_list = _split_columns(whitelist.columnas_permitidas)
     if not allowed_filter_cols_list:
         raise HTTPException(status_code=400, detail="La tabla no tiene columnas permitidas configuradas")
-    allowed_filter_keys = {c.upper() for c in allowed_filter_cols_list}
+    allowed_filter_keys = {_column_key(c) for c in allowed_filter_cols_list}
 
     result_cols = _split_columns(whitelist.columnas_resultado) or allowed_filter_cols_list
-    result_col_keys = [c.upper() for c in result_cols]
+    result_col_keys = [_column_key(c) for c in result_cols]
 
     bind = db.get_bind()
     try:
@@ -1187,16 +1197,16 @@ def consulta_tablas_search(
     except NoSuchTableError as e:
         raise HTTPException(status_code=400, detail=f"La tabla física no existe: {whitelist.tabla_bd}") from e
     real_cols = {c.name: c for c in reflected.columns}
-    real_cols_ci = {c.name.upper(): c for c in reflected.columns}
+    real_cols_ci = {_column_key(c.name): c for c in reflected.columns}
 
-    missing_filter = [c for c in allowed_filter_cols_list if c.upper() not in real_cols_ci]
+    missing_filter = [c for c in allowed_filter_cols_list if _column_key(c) not in real_cols_ci]
     if missing_filter:
         raise HTTPException(
             status_code=400,
             detail=f"Columnas permitidas inexistentes en tabla física: {', '.join(sorted(missing_filter))}",
         )
 
-    missing_result = [c for c in result_cols if c.upper() not in real_cols_ci]
+    missing_result = [c for c in result_cols if _column_key(c) not in real_cols_ci]
     if missing_result:
         raise HTTPException(
             status_code=400,
@@ -1206,7 +1216,7 @@ def consulta_tablas_search(
     conditions = []
     for f in payload.filters:
         col_name = f.column.strip()
-        col_key = col_name.upper()
+        col_key = _column_key(col_name)
         if col_key not in allowed_filter_keys:
             raise HTTPException(status_code=400, detail=f"Filtro no permitido para columna: {f.column.strip()}")
 
@@ -1256,15 +1266,15 @@ def consulta_tablas_search(
         else:
             raise HTTPException(status_code=400, detail=f"Operador no soportado: {op}")
 
-    selected_cols = [real_cols_ci[c.upper()].label(c) for c in result_cols]
+    selected_cols = [real_cols_ci[_column_key(c)].label(c) for c in result_cols]
     query = select(*selected_cols)
     if conditions:
         query = query.where(*conditions)
 
     if payload.order_by:
         order_name = payload.order_by.strip()
-        if order_name and order_name.upper() in set(result_col_keys):
-            order_col = real_cols_ci[order_name.upper()]
+        if order_name and _column_key(order_name) in set(result_col_keys):
+            order_col = real_cols_ci[_column_key(order_name)]
             query = query.order_by(order_col.desc() if payload.order_dir == "desc" else order_col.asc())
 
     rows = db.execute(query.limit(21)).mappings().all()
