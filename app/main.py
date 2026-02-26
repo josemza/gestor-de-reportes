@@ -6,7 +6,7 @@ from typing import Any
 from fastapi import FastAPI, Depends, HTTPException, Query, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from sqlalchemy import select, delete, func, Table, MetaData
+from sqlalchemy import select, delete, func, Table, MetaData, inspect, text
 from sqlalchemy.exc import NoSuchTableError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.sqltypes import String, Text, Date, DateTime, Integer, Numeric, Float, Boolean
@@ -1262,3 +1262,94 @@ def consulta_tablas_search(
         total_returned=len(items),
         truncated=truncated,
     )
+
+
+@app.get("/debug/oracle-reflection", tags=["debug"])
+def debug_oracle_reflection(
+    tabla_bd: str = Query(..., min_length=1, max_length=255),
+    schema: str | None = Query(default=None, max_length=128),
+    tables_sample_limit: int = Query(100, ge=1, le=1000),
+    db: Session = Depends(get_db),
+    _user=Depends(require_admin_rutas),
+):
+    """
+    Debug de reflexión en Oracle con la conexión activa.
+    """
+    bind = db.get_bind()
+    inspector = inspect(bind)
+
+    parsed_schema, parsed_table = _parse_table_identifier(tabla_bd)
+    effective_schema = schema.strip() if schema and schema.strip() else parsed_schema
+    table_name = parsed_table
+
+    current_schema = None
+    current_schema_error = None
+    try:
+        current_schema = db.execute(
+            text("select sys_context('USERENV','CURRENT_SCHEMA') from dual")
+        ).scalar_one_or_none()
+    except Exception as e:
+        current_schema_error = str(e)
+
+    has_table = False
+    has_table_error = None
+    try:
+        has_table = inspector.has_table(table_name, schema=effective_schema)
+    except Exception as e:
+        has_table_error = str(e)
+
+    table_names: list[str] = []
+    get_table_names_error = None
+    try:
+        table_names = inspector.get_table_names(schema=effective_schema)
+    except Exception as e:
+        get_table_names_error = str(e)
+
+    table_names_upper = {t.upper() for t in table_names}
+    in_get_table_names = table_name.upper() in table_names_upper
+
+    reflection_ok = False
+    reflection_error = None
+    reflected_columns: list[str] = []
+    try:
+        reflected = Table(
+            table_name,
+            MetaData(),
+            schema=effective_schema,
+            autoload_with=bind,
+        )
+        reflection_ok = True
+        reflected_columns = [c.name for c in reflected.columns]
+    except Exception as e:
+        reflection_error = str(e)
+
+    return {
+        "input": {
+            "tabla_bd": tabla_bd,
+            "schema_override": schema,
+        },
+        "resolved": {
+            "schema": effective_schema,
+            "table_name": table_name,
+        },
+        "connection": {
+            "dialect": bind.dialect.name,
+            "default_schema_name": inspector.default_schema_name,
+            "current_schema": current_schema,
+            "current_schema_error": current_schema_error,
+        },
+        "introspection": {
+            "has_table": has_table,
+            "has_table_error": has_table_error,
+            "in_get_table_names": in_get_table_names,
+            "get_table_names_error": get_table_names_error,
+            "get_table_names_count": len(table_names),
+            "get_table_names_sample": table_names[:tables_sample_limit],
+        },
+        "reflection": {
+            "ok": reflection_ok,
+            "error": reflection_error,
+            "columns_count": len(reflected_columns),
+            "columns_sample": reflected_columns[:50],
+        },
+    }
