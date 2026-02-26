@@ -130,6 +130,24 @@ def _parse_table_identifier(raw: str) -> tuple[str | None, str]:
     raise ValueError("TABLA_BD debe tener formato TABLA o ESQUEMA.TABLA")
 
 
+def _oracle_sa_normalize_identifier(name: str | None, bind: Any) -> str | None:
+    """
+    Oracle + SQLAlchemy normaliza identificadores no quoted en minúscula.
+    Si recibimos nombres en MAYÚSCULA (convención Oracle), pasamos a minúscula
+    para reflexión y lookups del Inspector/Table.
+    """
+    if not name:
+        return name
+    if getattr(bind.dialect, "name", "") != "oracle":
+        return name
+    stripped = name.strip()
+    if not stripped:
+        return stripped
+    if stripped.isupper():
+        return stripped.lower()
+    return stripped
+
+
 def _is_admin_user(current_user: dict[str, Any]) -> bool:
     return "ADMIN" in current_user["roles"] or current_user["username"] == "admin"
 
@@ -1143,17 +1161,20 @@ def consulta_tablas_search(
         raise HTTPException(status_code=404, detail="La tabla no existe o no está permitida para tu usuario")
 
     allowed_filter_cols_list = _split_columns(whitelist.columnas_permitidas)
-    allowed_filter_cols = set(allowed_filter_cols_list)
     if not allowed_filter_cols_list:
         raise HTTPException(status_code=400, detail="La tabla no tiene columnas permitidas configuradas")
+    allowed_filter_keys = {c.upper() for c in allowed_filter_cols_list}
 
     result_cols = _split_columns(whitelist.columnas_resultado) or allowed_filter_cols_list
+    result_col_keys = [c.upper() for c in result_cols]
 
     bind = db.get_bind()
     try:
         schema_name, table_name = _parse_table_identifier(whitelist.tabla_bd)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    schema_name = _oracle_sa_normalize_identifier(schema_name, bind)
+    table_name = _oracle_sa_normalize_identifier(table_name, bind) or table_name
 
     try:
         reflected = Table(
@@ -1166,15 +1187,16 @@ def consulta_tablas_search(
     except NoSuchTableError as e:
         raise HTTPException(status_code=400, detail=f"La tabla física no existe: {whitelist.tabla_bd}") from e
     real_cols = {c.name: c for c in reflected.columns}
+    real_cols_ci = {c.name.upper(): c for c in reflected.columns}
 
-    missing_filter = [c for c in allowed_filter_cols if c not in real_cols]
+    missing_filter = [c for c in allowed_filter_cols_list if c.upper() not in real_cols_ci]
     if missing_filter:
         raise HTTPException(
             status_code=400,
             detail=f"Columnas permitidas inexistentes en tabla física: {', '.join(sorted(missing_filter))}",
         )
 
-    missing_result = [c for c in result_cols if c not in real_cols]
+    missing_result = [c for c in result_cols if c.upper() not in real_cols_ci]
     if missing_result:
         raise HTTPException(
             status_code=400,
@@ -1184,10 +1206,11 @@ def consulta_tablas_search(
     conditions = []
     for f in payload.filters:
         col_name = f.column.strip()
-        if col_name not in allowed_filter_cols:
-            raise HTTPException(status_code=400, detail=f"Filtro no permitido para columna: {col_name}")
+        col_key = col_name.upper()
+        if col_key not in allowed_filter_keys:
+            raise HTTPException(status_code=400, detail=f"Filtro no permitido para columna: {f.column.strip()}")
 
-        col = real_cols[col_name]
+        col = real_cols_ci[col_key]
         op = f.operator
         value = f.value
 
@@ -1198,7 +1221,7 @@ def consulta_tablas_search(
 
         if op == "in":
             if not isinstance(value, list) or not value:
-                raise HTTPException(status_code=400, detail=f"El operador 'in' requiere una lista no vacía en {col_name}")
+                raise HTTPException(status_code=400, detail=f"El operador 'in' requiere una lista no vacía en {f.column.strip()}")
             parsed = [_parse_filter_value(v, col.type) for v in value]
             conditions.append(col.in_(parsed))
             continue
@@ -1233,15 +1256,15 @@ def consulta_tablas_search(
         else:
             raise HTTPException(status_code=400, detail=f"Operador no soportado: {op}")
 
-    selected_cols = [real_cols[c].label(c) for c in result_cols]
+    selected_cols = [real_cols_ci[c.upper()].label(c) for c in result_cols]
     query = select(*selected_cols)
     if conditions:
         query = query.where(*conditions)
 
     if payload.order_by:
         order_name = payload.order_by.strip()
-        if order_name and order_name in result_cols:
-            order_col = real_cols[order_name]
+        if order_name and order_name.upper() in set(result_col_keys):
+            order_col = real_cols_ci[order_name.upper()]
             query = query.order_by(order_col.desc() if payload.order_dir == "desc" else order_col.asc())
 
     rows = db.execute(query.limit(21)).mappings().all()
@@ -1287,6 +1310,8 @@ def debug_oracle_reflection(
     parsed_schema, parsed_table = _parse_table_identifier(tabla_bd)
     effective_schema = schema.strip() if schema and schema.strip() else parsed_schema
     table_name = parsed_table
+    effective_schema = _oracle_sa_normalize_identifier(effective_schema, bind)
+    table_name = _oracle_sa_normalize_identifier(table_name, bind) or table_name
 
     current_schema = None
     current_schema_error = None
