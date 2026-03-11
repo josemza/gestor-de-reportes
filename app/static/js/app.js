@@ -115,6 +115,16 @@
     if (modal) modal.style.display = "none";
   }
 
+  function openAdminTablaConsultaModal() {
+    const modal = $("adminTablaConsultaModal");
+    if (modal) modal.style.display = "";
+  }
+
+  function closeAdminTablaConsultaModal() {
+    const modal = $("adminTablaConsultaModal");
+    if (modal) modal.style.display = "none";
+  }
+
   function openConsultaResultadosModal() {
     const modal = $("consultaResultadosModal");
     if (modal) modal.style.display = "";
@@ -761,6 +771,7 @@
       if (ev.key === "Escape") {
         closeNuevaModal();
         closeAdminReporteModal();
+        closeAdminTablaConsultaModal();
         closeConsultaResultadosModal();
       }
     });
@@ -1765,64 +1776,97 @@
     tb.innerHTML = rows.map((r) => `
       <tr>
         <td class="mono">${esc(r.id)}</td>
-        <td><input id="admct_codigo_${esc(r.id)}" value="${esc(r.codigo || "")}" /></td>
-        <td><input id="admct_nombre_${esc(r.id)}" value="${esc(r.nombre || "")}" /></td>
-        <td><input id="admct_tabla_${esc(r.id)}" value="${esc(r.tabla_bd || "")}" /></td>
+        <td class="mono">${esc(r.codigo)}</td>
+        <td>${esc(r.nombre)}</td>
+        <td class="mono">${esc(r.tabla_bd)}</td>
+        <td>${Number(r.activo) === 1 ? "ACTIVO" : "INACTIVO"}</td>
         <td>
-          <select id="admct_activo_${esc(r.id)}">
-            <option value="1" ${Number(r.activo) === 1 ? "selected" : ""}>ACTIVO</option>
-            <option value="0" ${Number(r.activo) === 0 ? "selected" : ""}>INACTIVO</option>
-          </select>
-        </td>
-        <td>
-          <button class="btn btn--ghost btn--sm btn-admct-save" data-id="${esc(r.id)}">Guardar</button>
-        </td>
-      </tr>
-      <tr>
-        <td colspan="6">
-          <div class="form-grid">
-            <div class="field field--full">
-              <label>Descripción</label>
-              <textarea id="admct_desc_${esc(r.id)}" rows="2">${esc(r.descripcion || "")}</textarea>
-            </div>
-            <div class="field field--full">
-              <label>Columnas permitidas (filtro)</label>
-              <input id="admct_cols_f_${esc(r.id)}" value="${esc(r.columnas_permitidas || "")}" />
-            </div>
-            <div class="field field--full">
-              <label>Columnas resultado</label>
-              <input id="admct_cols_r_${esc(r.id)}" value="${esc(r.columnas_resultado || "")}" />
-            </div>
+          <div class="inline-controls">
+            <button class="btn btn--ghost btn--sm btn-admct-edit" data-id="${esc(r.id)}">Editar</button>
+            <button class="btn btn--ghost btn--sm btn-admct-toggle" data-id="${esc(r.id)}" data-next="${Number(r.activo) === 1 ? "0" : "1"}">
+              ${Number(r.activo) === 1 ? "Desactivar" : "Activar"}
+            </button>
           </div>
         </td>
       </tr>
     `).join("");
 
-    document.querySelectorAll(".btn-admct-save").forEach((btn) => {
+    document.querySelectorAll(".btn-admct-edit").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = Number(btn.dataset.id);
+        const row = (state.adminTablasConsulta || []).find((x) => Number(x.id) === id);
+        if (!row) {
+          showAlert("No se encontró la tabla seleccionada.", "err");
+          return;
+        }
+
+        $("admEditCtId").value = row.id;
+        $("admEditCtIdView").value = row.id;
+        $("admEditCtCodigo").value = row.codigo || "";
+        $("admEditCtNombre").value = row.nombre || "";
+        $("admEditCtTablaBd").value = row.tabla_bd || "";
+        $("admEditCtDescripcion").value = row.descripcion || "";
+        $("admEditCtColsPermitidas").value = row.columnas_permitidas || "";
+        $("admEditCtColsResultado").value = row.columnas_resultado || "";
+        $("admEditCtActivo").value = String(row.activo ?? 1);
+        openAdminTablaConsultaModal();
+      });
+    });
+
+    document.querySelectorAll(".btn-admct-toggle").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const id = btn.dataset.id;
-        const payload = {
-          codigo: $(`admct_codigo_${id}`)?.value?.trim(),
-          nombre: $(`admct_nombre_${id}`)?.value?.trim(),
-          tabla_bd: $(`admct_tabla_${id}`)?.value?.trim(),
-          descripcion: $(`admct_desc_${id}`)?.value?.trim() || null,
-          columnas_permitidas: $(`admct_cols_f_${id}`)?.value?.trim(),
-          columnas_resultado: $(`admct_cols_r_${id}`)?.value?.trim() || null,
-          activo: Number($(`admct_activo_${id}`)?.value || 1),
-        };
+        const next = Number(btn.dataset.next || 0);
         try {
           await api(`/admin/tablas-consulta/${encodeURIComponent(id)}`, {
             method: "PATCH",
-            body: JSON.stringify(payload),
+            body: JSON.stringify({ activo: next }),
           });
-          showAlert(`Tabla whitelist ${id} actualizada.`, "ok");
+          showAlert(`Tabla whitelist ${id} ${next === 1 ? "activada" : "desactivada"}.`, "ok");
           await loadAdminTablasConsulta();
           await loadConsultaTablasDisponibles();
         } catch (e) {
-          showAlert(`No se pudo actualizar tabla whitelist: ${e.message}`, "err");
+          showAlert(`No se pudo cambiar estado de tabla whitelist: ${e.message}`, "err");
         }
       });
     });
+  }
+
+  async function saveAdminTablaConsultaFromModal(ev) {
+    ev.preventDefault();
+    const id = $("admEditCtId")?.value?.trim();
+    if (!id) {
+      showAlert("No hay tabla seleccionada para editar.", "err");
+      return;
+    }
+
+    const payload = {
+      codigo: $("admEditCtCodigo")?.value?.trim(),
+      nombre: $("admEditCtNombre")?.value?.trim(),
+      tabla_bd: $("admEditCtTablaBd")?.value?.trim(),
+      descripcion: $("admEditCtDescripcion")?.value?.trim() || null,
+      columnas_permitidas: $("admEditCtColsPermitidas")?.value?.trim(),
+      columnas_resultado: $("admEditCtColsResultado")?.value?.trim() || null,
+      activo: Number($("admEditCtActivo")?.value || 1),
+    };
+
+    if (!payload.codigo || !payload.nombre || !payload.tabla_bd || !payload.columnas_permitidas) {
+      showAlert("Código, nombre, tabla BD y columnas permitidas son obligatorios.", "err");
+      return;
+    }
+
+    try {
+      await api(`/admin/tablas-consulta/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      });
+      closeAdminTablaConsultaModal();
+      showAlert(`Tabla whitelist ${id} actualizada.`, "ok");
+      await loadAdminTablasConsulta();
+      await loadConsultaTablasDisponibles();
+    } catch (e) {
+      showAlert(`No se pudo actualizar tabla whitelist: ${e.message}`, "err");
+    }
   }
 
   async function loadAdminTablasConsulta() {
@@ -1913,6 +1957,9 @@
   function setupAdminTablasConsulta() {
     $("btnAdmCtCrear")?.addEventListener("click", createAdminTablaConsulta);
     $("btnAdmCtRefrescar")?.addEventListener("click", loadAdminTablasConsulta);
+    $("btnCloseAdmCtModal")?.addEventListener("click", closeAdminTablaConsultaModal);
+    $("btnCloseAdmCtModalBg")?.addEventListener("click", closeAdminTablaConsultaModal);
+    $("formAdminTablaConsultaEdit")?.addEventListener("submit", saveAdminTablaConsultaFromModal);
     $("admCtTablaEquipo")?.addEventListener("change", loadEquiposTablaConsultaSeleccionada);
     $("admCtEquiposFiltro")?.addEventListener("input", renderAdmCtEquiposChecks);
     $("btnAdmCtGuardarEquipos")?.addEventListener("click", saveEquiposTablaConsulta);

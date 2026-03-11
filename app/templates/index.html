@@ -368,7 +368,7 @@
           </div>
 
           <div class="table-wrap">
-            <table class="table">
+            <table class="table" id="tablaAdminRutas">
               <thead>
                 <tr>
                   <th style="width: 80px;">ID</th>
@@ -449,7 +449,7 @@
             </div>
           </div>
           <div class="table-wrap">
-            <table class="table">
+            <table class="table" id="tablaAdminReportes">
               <thead>
                 <tr>
                   <th>ID</th>
@@ -619,10 +619,10 @@
         <div class="card">
           <div class="card__header">
             <h3>Tablas registradas</h3>
-            <p class="muted">Edita datos y asigna equipos permitidos.</p>
+            <p class="muted">Edita desde modal y activa o desactiva cada registro.</p>
           </div>
           <div class="table-wrap">
-            <table class="table">
+            <table class="table" id="tablaAdminTablasConsulta">
               <thead>
                 <tr>
                   <th>ID</th>
@@ -782,6 +782,60 @@
           <div class="field">
             <label for="admEditRepComando">Comando</label>
             <input id="admEditRepComando" type="text" placeholder="ruta del .bat a ejecutar" />
+          </div>
+          <div class="field field--full">
+            <button type="submit" class="btn btn--primary btn--inline">Guardar cambios</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div id="adminTablaConsultaModal" class="modal" style="display:none;">
+    <div class="modal__backdrop" id="btnCloseAdmCtModalBg"></div>
+    <div class="modal__panel modal__panel--wide">
+      <div class="card card--compact">
+        <div class="card__header card__header--between">
+          <h3>Editar tabla consultable</h3>
+          <button type="button" id="btnCloseAdmCtModal" class="btn btn--ghost btn--sm">Cerrar</button>
+        </div>
+
+        <form id="formAdminTablaConsultaEdit" class="form-grid">
+          <input id="admEditCtId" type="hidden" />
+          <div class="field">
+            <label for="admEditCtIdView">ID</label>
+            <input id="admEditCtIdView" type="text" readonly />
+          </div>
+          <div class="field">
+            <label for="admEditCtCodigo">Código</label>
+            <input id="admEditCtCodigo" type="text" />
+          </div>
+          <div class="field">
+            <label for="admEditCtNombre">Nombre</label>
+            <input id="admEditCtNombre" type="text" />
+          </div>
+          <div class="field field--full">
+            <label for="admEditCtTablaBd">Tabla física (BD)</label>
+            <input id="admEditCtTablaBd" type="text" />
+          </div>
+          <div class="field field--full">
+            <label for="admEditCtDescripcion">Descripción</label>
+            <textarea id="admEditCtDescripcion" rows="2"></textarea>
+          </div>
+          <div class="field field--full">
+            <label for="admEditCtColsPermitidas">Columnas permitidas para filtro (separadas por ;)</label>
+            <input id="admEditCtColsPermitidas" type="text" />
+          </div>
+          <div class="field field--full">
+            <label for="admEditCtColsResultado">Columnas de resultado (separadas por ;, opcional)</label>
+            <input id="admEditCtColsResultado" type="text" />
+          </div>
+          <div class="field">
+            <label for="admEditCtActivo">Activo</label>
+            <select id="admEditCtActivo">
+              <option value="1">Sí</option>
+              <option value="0">No</option>
+            </select>
           </div>
           <div class="field field--full">
             <button type="submit" class="btn btn--primary btn--inline">Guardar cambios</button>
