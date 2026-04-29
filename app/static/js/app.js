@@ -20,6 +20,7 @@
     autoRefreshTimer: null,
     apiBase: window.location.origin,
     selectedRequestId: null,
+    lastParametrosEjemploAplicado: "",
   };
 
   const AUTH_STORAGE_KEY = "reporteador_token";
@@ -162,6 +163,16 @@
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+
+  function normalizeJsonExampleText(txt) {
+    const raw = (txt || "").trim();
+    if (!raw) return "";
+    try {
+      return JSON.stringify(JSON.parse(raw), null, 2);
+    } catch {
+      return raw;
+    }
+  }
 
   const getFileName = (p) => {
     const raw = (p || "").toString();
@@ -342,10 +353,37 @@
     }
   }
 
+  function updateParametrosEjemplo(reporte) {
+    const textarea = $("parametros");
+    const help = $("parametros_help");
+    if (!textarea) return;
+
+    const previousApplied = state.lastParametrosEjemploAplicado || "";
+    const currentValue = textarea.value || "";
+    const nextExample = normalizeJsonExampleText(reporte?.parametros_ejemplo_json || "");
+    const shouldReplace = !currentValue.trim() || currentValue === previousApplied;
+
+    if (shouldReplace) {
+      textarea.value = nextExample;
+      state.lastParametrosEjemploAplicado = nextExample;
+    }
+
+    if (help) {
+      if (nextExample) {
+        help.textContent = "Se cargó el ejemplo JSON configurado para este reporte.";
+      } else if (reporte) {
+        help.textContent = "Este reporte no tiene ejemplo JSON configurado.";
+      } else {
+        help.textContent = "El ejemplo cambia según el reporte configurado.";
+      }
+    }
+  }
+
   // ---------- Nueva solicitud ----------
   function setupNuevaSolicitud() {
     $("reporte").addEventListener("change", async () => {
       updateHintRutaInput();
+      updateParametrosEjemplo(getReporteByCodigo(($("reporte").value || "").trim()));
       await cargarArchivosPermitidosDelReporte();
     });
     $("btn_cargar_archivos")?.addEventListener("click", async () => {
@@ -463,10 +501,14 @@
   function limpiarFormularioNuevaSolicitud(preserveResult = false) {
     $("formNueva").reset();
     $("parametros").value = "";
+    state.lastParametrosEjemploAplicado = "";
     $("ruta_input_select").innerHTML = `<option value="">Seleccione archivo...</option>`;
     if ($("archivos_help")) {
       $("archivos_help").textContent = "Opcional según reporte";
       $("archivos_help").title = "";
+    }
+    if ($("parametros_help")) {
+      $("parametros_help").textContent = "El ejemplo cambia según el reporte configurado.";
     }
     if (!preserveResult) {
       $("resultNueva").innerHTML = `<div class="result-empty">Formulario limpiado.</div>`;
@@ -797,9 +839,9 @@
     await loadHealth();
     await fillAdminReportesSelect();
 
-    $("parametros").value = `{
-  "periodo": "2026-02"
-}`;
+    if ($("parametros_help")) {
+      $("parametros_help").textContent = "El ejemplo cambia según el reporte configurado.";
+    }
   }
 
   async function bootstrapAuth() {
@@ -1103,6 +1145,7 @@
         $("admEditRepReqInput").value = String(row.requiere_input_archivo ?? 0);
         $("admEditRepActivo").value = String(row.activo ?? 0);
         $("admEditRepRutaOutput").value = row.ruta_output_base || "";
+        $("admEditRepParametrosEjemplo").value = normalizeJsonExampleText(row.parametros_ejemplo_json || "");
         $("admEditRepTipos").value = row.tipos_permitidos || "";
         $("admEditRepComando").value = row.comando || "";
         openAdminReporteModal();
@@ -1139,6 +1182,7 @@
       requiere_input_archivo: Number($("admEditRepReqInput")?.value || 0),
       activo: Number($("admEditRepActivo")?.value || 0),
       ruta_output_base: $("admEditRepRutaOutput")?.value?.trim() || null,
+      parametros_ejemplo_json: $("admEditRepParametrosEjemplo")?.value?.trim() || null,
       tipos_permitidos: $("admEditRepTipos")?.value?.trim() || null,
       comando: $("admEditRepComando")?.value?.trim() || null,
     };
@@ -1170,6 +1214,7 @@
       tipos_permitidos: $("admRepTipos")?.value?.trim() || null,
       comando: $("admRepComando")?.value?.trim() || null,
       ruta_output_base: $("admRepRutaOutput")?.value?.trim() || null,
+      parametros_ejemplo_json: $("admRepParametrosEjemplo")?.value?.trim() || null,
       requiere_input_archivo: Number($("admRepReqInput")?.value || 0),
       activo: Number($("admRepActivo")?.value || 1),
     };
@@ -1190,6 +1235,7 @@
       $("admRepTipos").value = "";
       $("admRepComando").value = "";
       $("admRepRutaOutput").value = "";
+      $("admRepParametrosEjemplo").value = "";
       showAlert("Reporte creado correctamente.", "ok");
       await loadReportes();
       await loadAdminReportes();

@@ -17,6 +17,7 @@ class ReporteCreate(BaseModel):
     activo: bool = True
     comando: str | None = None
     ruta_output_base: str | None = None
+    parametros_ejemplo_json: str | None = None
 
 class ReporteOut(BaseModel):
     id: int
@@ -25,6 +26,7 @@ class ReporteOut(BaseModel):
     requiere_input_archivo: bool
     tipos_permitidos: str | None
     activo: bool
+    parametros_ejemplo_json: str | None
 
     model_config = {"from_attributes": True}
 

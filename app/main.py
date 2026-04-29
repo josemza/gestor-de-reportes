@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, date
+import json
 from pathlib import Path
 from typing import Any
 
@@ -110,6 +111,25 @@ def _split_columns(raw: str | None) -> list[str]:
     if not raw:
         return []
     return [x.strip() for x in raw.split(";") if x and x.strip()]
+
+
+def _normalize_json_example(raw: str | None) -> str | None:
+    txt = (raw or "").strip()
+    if not txt:
+        return None
+
+    try:
+        parsed = json.loads(txt)
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=422, detail=f"parametros_ejemplo_json inválido: {e.msg}") from e
+
+    if not isinstance(parsed, dict):
+        raise HTTPException(
+            status_code=422,
+            detail="parametros_ejemplo_json debe ser un objeto JSON, no arreglo ni valor escalar",
+        )
+
+    return json.dumps(parsed, ensure_ascii=False, indent=2)
 
 
 def _parse_table_identifier(raw: str) -> tuple[str | None, str]:
@@ -265,7 +285,9 @@ def create_reporte(payload: ReporteCreate, db: Session = Depends(get_db)):
     exists = crud.get_reporte_by_codigo(db, payload.codigo)
     if exists:
         raise HTTPException(status_code=409, detail="El código de reporte ya existe")
-    return crud.create_reporte(db, payload.model_dump())
+    data = payload.model_dump()
+    data["parametros_ejemplo_json"] = _normalize_json_example(payload.parametros_ejemplo_json)
+    return crud.create_reporte(db, data)
 
 
 @app.get("/admin/reportes", response_model=ReporteAdminPageOut, tags=["admin"])
@@ -322,6 +344,7 @@ def create_reporte_admin(
         activo=1 if payload.activo else 0,
         comando=payload.comando,
         ruta_output_base=payload.ruta_output_base,
+        parametros_ejemplo_json=_normalize_json_example(payload.parametros_ejemplo_json),
         created_at=now,
         updated_at=now,
     )
@@ -371,6 +394,9 @@ def update_reporte_admin(
     
     if payload.ruta_output_base is not None:
         row.ruta_output_base = payload.ruta_output_base
+
+    if payload.parametros_ejemplo_json is not None:
+        row.parametros_ejemplo_json = _normalize_json_example(payload.parametros_ejemplo_json)
 
     row.updated_at = datetime.now(timezone.utc)
     db.add(row)

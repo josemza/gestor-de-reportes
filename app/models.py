@@ -16,6 +16,7 @@ class Reporte(Base):
     activo: Mapped[int] = mapped_column("ACTIVO", Integer, default=1, nullable=False)
     comando: Mapped[str | None] = mapped_column("COMANDO", String(500), nullable=True)
     ruta_output_base: Mapped[str | None] = mapped_column("RUTA_OUTPUT_BASE", String(1000), nullable=True)
+    parametros_ejemplo_json: Mapped[str | None] = mapped_column("PARAMETROS_EJEMPLO_JSON", Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column("CREATED_AT", DateTime, default=datetime.now(timezone.utc), nullable=False)
     updated_at: Mapped[datetime] = mapped_column("UPDATED_AT", DateTime, default=datetime.now(timezone.utc), nullable=False)
 

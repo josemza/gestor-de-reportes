@@ -24,6 +24,7 @@ class ReporteAdminCreate(BaseModel):
     activo: int = Field(default=1)
     comando: str | None = None
     ruta_output_base: str | None = None
+    parametros_ejemplo_json: str | None = None
 
 class ReporteAdminUpdate(BaseModel):
     codigo: str | None = Field(default=None, min_length=2, max_length=100)
@@ -34,6 +35,7 @@ class ReporteAdminUpdate(BaseModel):
     activo: int | None = None
     comando: str | None = None
     ruta_output_base: str | None = None
+    parametros_ejemplo_json: str | None = None
 
 class ReporteAdminOut(BaseModel):
     id: int
@@ -45,6 +47,7 @@ class ReporteAdminOut(BaseModel):
     activo: int
     comando: str | None
     ruta_output_base: str | None
+    parametros_ejemplo_json: str | None
 
     model_config = {"from_attributes": True}
 
