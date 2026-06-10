@@ -9,6 +9,7 @@
 </head>
 
 <body>
+  <div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="true"></div>
   <!-- VIEW: LOGIN -->
   <div id="login-view" class="login-view">
     <div class="login-card">
@@ -89,13 +90,6 @@
           </svg>
           <span class="menu__label">Consulta Tablas</span>
         </button>
-        <button class="menu__item" data-tab="tab-admin-rutas">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
-            <polyline points="9 22 9 12 15 12 15 22"></polyline>
-          </svg>
-          <span class="menu__label">Admin Rutas</span>
-        </button>
         <button class="menu__item" data-tab="tab-admin-reportes">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M4 4h16v16H4z"></path>
@@ -170,8 +164,6 @@
           </button>
         </div>
       </header>
-
-      <section id="alerts"></section>
 
       <!-- TAB: DASHBOARD (Merged Nueva + Mis) -->
       <section id="tab-dashboard" class="tab is-active dashboard-grid">
@@ -323,138 +315,21 @@
 
       </section>
 
-      <!-- TAB: ADMIN-->
-      <section id="tab-admin-rutas" class="tab">
-        <div class="card">
-          <div class="card__header">
-            <h3>Administración de rutas permitidas</h3>
-            <p class="muted">Configura carpetas permitidas por reporte.</p>
-          </div>
-
-          <div class="form-grid">
-            <div class="field">
-              <label for="adminReporte">Reporte</label>
-              <select id="adminReporte">
-                <option value="">Seleccione un reporte</option>
-              </select>
-            </div>
-
-            <div class="field">
-              <div>&nbsp;</div>
-              <button type="button" id="btnAdminCargar" class="btn btn--ghost btn--inline">
-                Cargar rutas
-              </button>
-            </div>
-
-            <div class="field field--full">
-              <label for="adminRutaNueva">Nueva ruta base (UNC/local)</label>
-              <div class="input-row">
-                <input id="adminRutaNueva" type="text" placeholder="\\pps-nas\Reportes\Input\Ventas" />
-                <button type="button" id="btnAdminAgregar" class="btn btn--primary btn--inline">
-                  Agregar
-                </button>
-              </div>
-              <small class="hint">Se registrará como activa (ACTIVO=1).</small>
-            </div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card__header card__header--between">
-            <div>
-              <h3>Rutas registradas</h3>
-              <p class="muted">Activa/desactiva o edita ruta.</p>
-            </div>
-          </div>
-
-          <div class="table-wrap">
-            <table class="table" id="tablaAdminRutas">
-              <thead>
-                <tr>
-                  <th style="width: 80px;">ID</th>
-                  <th>Ruta base</th>
-                  <th style="width: 120px;">Estado</th>
-                  <th style="width: 260px;">Acciones</th>
-                </tr>
-              </thead>
-              <tbody id="tbodyAdminRutas">
-                <tr>
-                  <td colspan="4" class="table-empty">Selecciona un reporte para ver rutas.</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <section id="tab-admin-reportes" class="tab">
-        <div class="card">
-          <div class="card__header">
-            <h3>CRUD de reportes</h3>
-            <p class="muted">Crear, editar y desactivar reportes.</p>
-          </div>
-          <div class="form-grid">
-            <div class="field">
-              <label for="admRepCodigo">Código</label>
-              <input id="admRepCodigo" type="text" placeholder="RPT_XYZ" />
-            </div>
-            <div class="field">
-              <label for="admRepNombre">Nombre</label>
-              <input id="admRepNombre" type="text" placeholder="Reporte XYZ" />
-            </div>
-            <div class="field field--full">
-              <label for="admRepDescripcion">Descripción</label>
-              <textarea id="admRepDescripcion" rows="2" placeholder="Descripción del reporte"></textarea>
-            </div>
-            <div class="field">
-              <label for="admRepTipos">Tipos permitidos</label>
-              <input id="admRepTipos" type="text" placeholder="csv;xlsx" />
-            </div>
-            <div class="field">
-              <label for="admRepComando">Comando</label>
-              <input id="admRepComando" type="text" placeholder="ruta del .bat a ejecutar" />
-            </div>
-            <div class="field field--full">
-              <label for="admRepRutaOutput">Ruta output base</label>
-              <input id="admRepRutaOutput" type="text" placeholder="\\servidor\reportes\salida" />
-            </div>
-            <div class="field field--full">
-              <label for="admRepParametrosEjemplo">Parámetros JSON de ejemplo</label>
-              <textarea id="admRepParametrosEjemplo" rows="6" class="mono text-sm"
-                placeholder='{"periodo":"2026-02","empresa":"ACME"}'></textarea>
-            </div>
-            <div class="field">
-              <label for="admRepReqInput">Requiere input</label>
-              <select id="admRepReqInput">
-                <option value="1">Sí</option>
-                <option value="0">No</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="admRepActivo">Activo</label>
-              <select id="admRepActivo">
-                <option value="1">Sí</option>
-                <option value="0">No</option>
-              </select>
-            </div>
-            <div class="field field--full">
-              <button type="button" id="btnAdmRepCrear" class="btn btn--primary btn--inline">Crear reporte</button>
-            </div>
-          </div>
-        </div>
-        <div class="card">
+      <section id="tab-admin-reportes" class="tab admin-compact">
+        <div class="card card-compact section-compact">
           <div class="card__header card__header--between">
             <div>
               <h3>Reportes registrados</h3>
-              <p class="muted">Edición mediante formulario modal.</p>
+              <p class="muted">Crea, configura y desactiva reportes desde una sola experiencia integrada.</p>
             </div>
             <div class="inline-controls">
-              <input id="admRepFiltroCodigo" type="text" class="input-sm" placeholder="Filtrar por código" />
+              <button type="button" id="btnOpenAdmRepCreateModal" class="btn btn--primary btn--sm">Nuevo reporte</button>
               <button type="button" id="btnAdmRepRefrescar" class="btn btn--ghost btn--sm">Recargar</button>
+              <input id="admRepFiltroCodigo" type="text" class="input-sm" placeholder="Filtrar por código" />
             </div>
           </div>
           <div class="table-wrap">
-            <table class="table" id="tablaAdminReportes">
+            <table class="table table-compact" id="tablaAdminReportes">
               <thead>
                 <tr>
                   <th>ID</th>
@@ -483,151 +358,63 @@
         </div>
       </section>
 
-      <section id="tab-admin-equipos" class="tab">
-        <div class="card">
-          <div class="card__header">
-            <h3>Maestro de equipos</h3>
-            <p class="muted">Crea y administra equipos disponibles.</p>
-          </div>
-          <div class="form-grid">
-            <div class="field">
-              <label for="admEquipoNombre">Nombre de equipo</label>
-              <input id="admEquipoNombre" type="text" placeholder="EQUIPO_OPERACIONES" />
+      <section id="tab-admin-equipos" class="tab admin-compact">
+        <div class="card card-compact section-compact">
+          <div class="card__header card__header--between">
+            <div>
+              <h3>Equipos</h3>
+              <p>Usa la tabla principal para crear equipos y abrir su configuración paso a paso.</p>
             </div>
-            <div class="field">
-              <label for="admEquipoActivo">Estado</label>
-              <select id="admEquipoActivo">
-                <option value="1">Activo</option>
-                <option value="0">Inactivo</option>
-              </select>
-            </div>
-            <div class="field field--full">
-              <button type="button" id="btnAdmEquipoCrear" class="btn btn--primary btn--inline">Crear equipo</button>
-              <button type="button" id="btnAdmEquipoRefrescar" class="btn btn--ghost btn--inline">Recargar equipos</button>
+            <div class="inline-controls">
+              <button type="button" id="btnOpenAdmEquipoCreateModal" class="btn btn--primary btn--sm">Nuevo equipo</button>
+              <button type="button" id="btnAdmEquipoRefrescar" class="btn btn--ghost btn--sm">Recargar equipos</button>
             </div>
           </div>
           <div class="table-wrap mt-4">
-            <table class="table">
+            <table class="table table-compact" id="tablaAdminEquipos">
               <thead>
                 <tr>
                   <th>ID</th>
-                  <th>Nombre</th>
+                  <th>Nombre del equipo</th>
                   <th>Estado</th>
+                  <th>Usuarios asignados</th>
+                  <th>Reportes asignados</th>
                   <th>Acciones</th>
                 </tr>
               </thead>
               <tbody id="tbodyEquipos">
-                <tr><td colspan="4" class="table-empty">Sin equipos.</td></tr>
+                <tr><td colspan="6" class="table-empty">Sin equipos.</td></tr>
               </tbody>
             </table>
           </div>
-        </div>
-
-        <div class="card">
-          <div class="card__header">
-            <h3>Asignación de equipos a usuarios</h3>
-            <p class="muted">Un usuario puede pertenecer a uno o más equipos.</p>
-          </div>
-          <div class="form-grid">
-            <div class="field">
-              <label for="admUsuarioEquipo">Usuario</label>
-              <select id="admUsuarioEquipo">
-                <option value="">Seleccione usuario</option>
-              </select>
-            </div>
-            <div class="field field--full">
-              <label for="admUsuarioEquiposFiltro">Buscar equipo</label>
-              <input id="admUsuarioEquiposFiltro" type="text" placeholder="Filtrar equipos..." />
-            </div>
-            <div class="field field--full">
-              <label>Equipos</label>
-              <div id="admUsuarioEquiposChecks" class="checks-grid"></div>
-            </div>
-            <div class="field field--full">
-              <button type="button" id="btnAdmUsuarioEquiposGuardar" class="btn btn--primary btn--inline">Guardar asignación</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card__header">
-            <h3>Asignación de equipos a reportes</h3>
-            <p class="muted">Solo usuarios de equipos suscritos verán estos reportes.</p>
-          </div>
-          <div class="form-grid">
-            <div class="field">
-              <label for="admReporteEquipo">Reporte</label>
-              <select id="admReporteEquipo">
-                <option value="">Seleccione reporte</option>
-              </select>
-            </div>
-            <div class="field field--full">
-              <label for="admReporteEquiposFiltro">Buscar equipo</label>
-              <input id="admReporteEquiposFiltro" type="text" placeholder="Filtrar equipos..." />
-            </div>
-            <div class="field field--full">
-              <label>Equipos</label>
-              <div id="admReporteEquiposChecks" class="checks-grid"></div>
-            </div>
-            <div class="field field--full">
-              <button type="button" id="btnAdmReporteEquiposGuardar" class="btn btn--primary btn--inline">Guardar asignación</button>
-            </div>
+          <div class="table-footer-controls">
+            <select id="admEquipoPageSize" class="input-sm">
+              <option value="10" selected>10 / página</option>
+              <option value="20">20 / página</option>
+              <option value="30">30 / página</option>
+            </select>
+            <button id="admEquipoPrevPage" class="btn btn--ghost btn--sm" type="button">Anterior</button>
+            <span id="admEquipoPageInfo" class="muted text-sm">Página 1 de 1</span>
+            <button id="admEquipoNextPage" class="btn btn--ghost btn--sm" type="button">Siguiente</button>
           </div>
         </div>
       </section>
 
-      <section id="tab-admin-tablas-consulta" class="tab">
-        <div class="card">
-          <div class="card__header">
-            <h3>Whitelist de tablas consultables</h3>
-            <p class="muted">Define qué tablas son consultables y qué columnas se pueden filtrar/ver.</p>
-          </div>
-          <div class="form-grid">
-            <div class="field">
-              <label for="admCtCodigo">Código</label>
-              <input id="admCtCodigo" type="text" placeholder="TAB_CLIENTES" />
+      <section id="tab-admin-tablas-consulta" class="tab admin-compact">
+        <div class="card card-compact section-compact">
+          <div class="card__header card__header--between">
+            <div>
+              <h3>Tablas consultables</h3>
+              <p class="muted">Crea, configura acceso por equipos y activa o desactiva tablas desde una sola experiencia integrada.</p>
             </div>
-            <div class="field">
-              <label for="admCtNombre">Nombre</label>
-              <input id="admCtNombre" type="text" placeholder="Clientes" />
+            <div class="inline-controls">
+              <button type="button" id="btnOpenAdmCtCreateModal" class="btn btn--primary btn--sm">Nueva tabla</button>
+              <button type="button" id="btnAdmCtRefrescar" class="btn btn--ghost btn--sm">Recargar</button>
+              <input id="admCtFiltroQ" type="text" class="input-sm" placeholder="Buscar por código, nombre o tabla" />
             </div>
-            <div class="field field--full">
-              <label for="admCtTablaBd">Tabla física (BD)</label>
-              <input id="admCtTablaBd" type="text" placeholder="CLIENTES_GCI" />
-            </div>
-            <div class="field field--full">
-              <label for="admCtDescripcion">Descripción</label>
-              <textarea id="admCtDescripcion" rows="2"></textarea>
-            </div>
-            <div class="field field--full">
-              <label for="admCtColsPermitidas">Columnas permitidas para filtro (separadas por ;)</label>
-              <input id="admCtColsPermitidas" type="text" placeholder="CLIENTE_ID;NOMBRE;ESTADO;FECHA_ALTA" />
-            </div>
-            <div class="field field--full">
-              <label for="admCtColsResultado">Columnas de resultado (separadas por ;, opcional)</label>
-              <input id="admCtColsResultado" type="text" placeholder="CLIENTE_ID;NOMBRE;ESTADO" />
-            </div>
-            <div class="field">
-              <label for="admCtActivo">Activo</label>
-              <select id="admCtActivo">
-                <option value="1">Sí</option>
-                <option value="0">No</option>
-              </select>
-            </div>
-            <div class="field field--full">
-              <button type="button" id="btnAdmCtCrear" class="btn btn--primary btn--inline">Crear tabla en whitelist</button>
-              <button type="button" id="btnAdmCtRefrescar" class="btn btn--ghost btn--inline">Recargar</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card__header">
-            <h3>Tablas registradas</h3>
-            <p class="muted">Edita desde modal y activa o desactiva cada registro.</p>
           </div>
           <div class="table-wrap">
-            <table class="table" id="tablaAdminTablasConsulta">
+            <table class="table table-compact" id="tablaAdminTablasConsulta">
               <thead>
                 <tr>
                   <th>ID</th>
@@ -643,31 +430,15 @@
               </tbody>
             </table>
           </div>
-        </div>
-
-        <div class="card">
-          <div class="card__header">
-            <h3>Asignación de equipos a tablas</h3>
-            <p class="muted">Solo usuarios de estos equipos podrán consultar la tabla.</p>
-          </div>
-          <div class="form-grid">
-            <div class="field">
-              <label for="admCtTablaEquipo">Tabla</label>
-              <select id="admCtTablaEquipo">
-                <option value="">Seleccione tabla</option>
-              </select>
-            </div>
-            <div class="field field--full">
-              <label for="admCtEquiposFiltro">Buscar equipo</label>
-              <input id="admCtEquiposFiltro" type="text" placeholder="Filtrar equipos..." />
-            </div>
-            <div class="field field--full">
-              <label>Equipos</label>
-              <div id="admCtEquiposChecks" class="checks-grid"></div>
-            </div>
-            <div class="field field--full">
-              <button type="button" id="btnAdmCtGuardarEquipos" class="btn btn--primary btn--inline">Guardar asignación</button>
-            </div>
+          <div class="table-footer-controls">
+            <select id="admCtPageSize" class="input-sm">
+              <option value="10" selected>10 / página</option>
+              <option value="20">20 / página</option>
+              <option value="30">30 / página</option>
+            </select>
+            <button id="admCtPrevPage" class="btn btn--ghost btn--sm" type="button">Anterior</button>
+            <span id="admCtPageInfo" class="muted text-sm">Página 1 de 1</span>
+            <button id="admCtNextPage" class="btn btn--ghost btn--sm" type="button">Siguiente</button>
           </div>
         </div>
       </section>
@@ -735,119 +506,607 @@
     </main>
   </div>
 
-  <div id="adminReporteModal" class="modal" style="display:none;">
-    <div class="modal__backdrop" id="btnCloseAdmRepModalBg"></div>
-    <div class="modal__panel modal__panel--wide">
-      <div class="card card--compact">
-        <div class="card__header card__header--between">
-          <h3>Editar reporte</h3>
-          <button type="button" id="btnCloseAdmRepModal" class="btn btn--ghost btn--sm">Cerrar</button>
+  <div id="adminUsuarioEquiposModal" class="modal" style="display:none;">
+    <div class="modal__backdrop" id="btnCloseAdmUsuarioEquiposModalBg"></div>
+    <div class="modal__panel modal__panel--configurator modal-compact admin-compact">
+        <div class="card card--compact card-compact configurator-shell section-compact">
+          <div class="card__header card__header--between configurator-header">
+          <div>
+            <h3>Asignar equipos a usuario</h3>
+            <p id="admUsuarioEquiposContextText" class="muted">Selecciona los equipos que pertenecerán al usuario.</p>
+          </div>
+          <div class="inline-controls">
+            <span id="admUsuarioEquiposIdentity" class="badge badge--neutral">Usuario</span>
+            <button type="button" id="btnCloseAdmUsuarioEquiposModal" class="btn btn--ghost btn--sm">Cerrar</button>
+          </div>
         </div>
 
-        <form id="formAdminReporteEdit" class="form-grid">
-          <input id="admEditRepId" type="hidden" />
-          <div class="field">
-            <label for="admEditRepIdView">ID</label>
-            <input id="admEditRepIdView" type="text" readonly />
+        <div class="form-grid form-compact access-form-grid form-layout-admin">
+          <section class="form-section field--full">
+            <div id="admUsuarioEquiposInactiveNotice" class="access-context-banner" hidden>
+              <span class="access-context-banner__label">Equipos inactivos</span>
+              <strong id="admUsuarioEquiposInactiveText">Los equipos inactivos pueden preasignarse, pero no concederán acceso hasta ser activados.</strong>
+            </div>
+          </section>
+
+          <section class="form-section field--full">
+            <div class="form-layout-grid">
+              <div class="field field--span-8">
+                <label for="admUsuarioEquiposFiltro">Buscar equipo</label>
+                <input id="admUsuarioEquiposFiltro" type="text" placeholder="Filtrar equipos..." />
+              </div>
+              <div class="field field--span-4">
+                <label>Resumen rápido</label>
+                <div class="access-selection-summary">
+                  <span class="muted">Equipos seleccionados</span>
+                  <strong id="admUsuarioEquiposSeleccionInfo">0 equipos</strong>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="form-section field--full">
+            <div class="form-layout-grid">
+              <div class="field field--span-12">
+                <label>Equipos asignables</label>
+                <div id="admUsuarioEquiposChecks" class="checks-grid checks-compact checks-grid--cards"></div>
+              </div>
+            </div>
+          </section>
+
+          <div class="field field--full configurator-actions">
+            <button type="button" id="btnCancelarUsuarioEquipos" class="btn btn--ghost btn--inline">Cancelar</button>
+            <button type="button" id="btnGuardarUsuarioEquipos" class="btn btn--primary btn--inline">Guardar equipos</button>
           </div>
-          <div class="field">
-            <label for="admEditRepCodigo">Código</label>
-            <input id="admEditRepCodigo" type="text" />
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="adminReporteModal" class="modal" style="display:none;">
+    <div class="modal__backdrop" id="btnCloseAdmRepModalBg"></div>
+    <div class="modal__panel modal__panel--configurator modal-compact admin-compact">
+      <div class="card card--compact card-compact configurator-shell section-compact">
+        <div class="card__header card__header--between configurator-header">
+          <div>
+            <h3 id="adminReporteModalTitle">Configurar reporte</h3>
+            <p id="cfgReportContextText" class="muted">Completa los datos base para iniciar la configuración.</p>
           </div>
-          <div class="field">
-            <label for="admEditRepNombre">Nombre</label>
-            <input id="admEditRepNombre" type="text" />
+          <div class="inline-controls">
+            <span id="cfgReportIdentity" class="badge badge--neutral">Reporte nuevo</span>
+            <button type="button" id="btnCloseAdmRepModal" class="btn btn--ghost btn--sm">Cerrar</button>
           </div>
-          <div class="field field--full">
-            <label for="admEditRepDescripcion">Descripción</label>
-            <textarea id="admEditRepDescripcion" rows="2"></textarea>
+        </div>
+
+        <div class="configurator-steps" id="cfgStepsNav">
+          <button type="button" class="configurator-step is-active" data-config-step="datos">1. Datos del reporte</button>
+          <button type="button" class="configurator-step is-disabled" data-config-step="rutas">2. Entradas / rutas permitidas</button>
+          <button type="button" class="configurator-step is-disabled" data-config-step="equipos">3. Equipos autorizados</button>
+          <button type="button" class="configurator-step is-disabled" data-config-step="revision">4. Revisión</button>
+        </div>
+
+        <div class="configurator-body">
+          <section class="configurator-panel is-active" data-config-panel="datos">
+            <div class="configurator-panel__header">
+              <h4>Datos del reporte</h4>
+              <p class="muted">Este bloque reutiliza el formulario administrativo actual del reporte.</p>
+            </div>
+
+            <form id="formAdminReporteEdit" class="form-grid form-compact form-layout-admin">
+              <input id="admEditRepId" type="hidden" />
+
+              <section class="form-section field--full">
+                <div class="form-section__header">
+                  <h5>Identificación</h5>
+                  <p class="muted">Campos clave para reconocer el reporte dentro del catálogo.</p>
+                </div>
+                <div class="form-layout-grid">
+                  <div class="field field--span-2 field--readonly-meta" id="admEditRepIdField" hidden>
+                    <label for="admEditRepIdView">ID</label>
+                    <input id="admEditRepIdView" type="text" readonly />
+                  </div>
+                  <div class="field field--span-3">
+                    <label for="admEditRepCodigo">Código</label>
+                    <input id="admEditRepCodigo" type="text" placeholder="RPT_XYZ" required pattern="[A-Za-z0-9_-]+" />
+                  </div>
+                  <div class="field field--span-7">
+                    <label for="admEditRepNombre">Nombre</label>
+                    <input id="admEditRepNombre" type="text" placeholder="Reporte XYZ" required />
+                  </div>
+                </div>
+              </section>
+
+              <section class="form-section field--full">
+                <div class="form-section__header">
+                  <h5>Configuración básica</h5>
+                  <p class="muted">Estado operativo y descripción funcional del reporte.</p>
+                </div>
+                <div class="form-layout-grid">
+                  <div class="field field--span-3">
+                    <label for="admEditRepReqInput">Requiere input</label>
+                    <select id="admEditRepReqInput">
+                      <option value="1">Sí</option>
+                      <option value="0">No</option>
+                    </select>
+                  </div>
+                  <div class="field field--span-3">
+                    <label for="admEditRepActivo">Activo</label>
+                    <select id="admEditRepActivo">
+                      <option value="1">Sí</option>
+                      <option value="0">No</option>
+                    </select>
+                  </div>
+                  <div class="field field--span-6" id="admEditRepTiposField">
+                    <label for="admEditRepTipos">Tipo input permitido</label>
+                    <input id="admEditRepTipos" type="text" placeholder="csv;xlsx" />
+                  </div>
+                  <div class="field field--span-12">
+                    <label for="admEditRepDescripcion">Descripción</label>
+                    <textarea id="admEditRepDescripcion" rows="2" placeholder="Descripción del reporte"></textarea>
+                  </div>
+                </div>
+              </section>
+
+              <section class="form-section form-section--advanced field--full">
+                <div class="form-section__header">
+                  <h5>Configuración técnica</h5>
+                  <p class="muted">Rutas, formatos y parámetros usados por la ejecución del reporte.</p>
+                </div>
+                <div class="form-layout-grid">
+                  <div class="field field--span-6">
+                    <label for="admEditRepComando">Comando</label>
+                    <input id="admEditRepComando" type="text" placeholder="ruta del .bat a ejecutar" />
+                  </div>
+                  <div class="field field--span-6">
+                    <label for="admEditRepParametrosEjemplo">Parámetros JSON de ejemplo</label>
+                    <textarea id="admEditRepParametrosEjemplo" rows="4" class="mono text-sm"
+                      placeholder='{"periodo":"2026-02","empresa":"ACME"}'></textarea>
+                  </div>
+                  <div class="field field--span-12">
+                    <label for="admEditRepRutaOutput">Ruta output base</label>
+                    <input id="admEditRepRutaOutput" type="text" placeholder="\\servidor\reportes\salida" />
+                  </div>
+                </div>
+              </section>
+
+              <div class="field field--full configurator-actions">
+                <button type="submit" id="btnSubmitAdminReporteModal" class="btn btn--primary btn--inline">Guardar cambios</button>
+                <button type="button" id="btnCfgGoToRutas" class="btn btn--ghost btn--inline">Continuar con rutas</button>
+              </div>
+            </form>
+          </section>
+
+          <section class="configurator-panel" data-config-panel="rutas">
+            <div class="configurator-panel__header">
+              <h4>Entradas / rutas permitidas</h4>
+              <p id="cfgRutasStatus" class="muted">Guarda primero el reporte para habilitar esta sección.</p>
+            </div>
+
+            <div class="form-grid form-compact form-layout-admin">
+              <section class="form-section field--full">
+                <div class="form-section__header">
+                  <h5>Nueva ruta permitida</h5>
+                </div>
+                <div class="form-layout-grid">
+                  <div class="field field--span-12">
+                    <label for="cfgRutaNueva">Nueva ruta base (UNC/local)</label>
+                    <div class="input-row input-row--split">
+                      <input id="cfgRutaNueva" type="text" placeholder="\\pps-nas\Reportes\Input\Ventas" />
+                      <button type="button" id="btnCfgAgregarRuta" class="btn btn--primary btn--inline">Agregar</button>
+                    </div>
+                    <small class="hint">Verificar que la ruta exista</small>
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            <div class="table-wrap">
+              <table class="table table-compact" id="tablaCfgRutas">
+                <thead>
+                  <tr>
+                    <th style="width: 80px;">ID</th>
+                    <th>Ruta base</th>
+                    <th style="width: 120px;">Estado</th>
+                    <th style="width: 260px;">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody id="cfgTbodyRutas">
+                  <tr><td colspan="4" class="table-empty">Guarda el reporte para administrar rutas.</td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="configurator-actions">
+              <button type="button" id="btnCfgGoToEquipos" class="btn btn--ghost btn--inline" hidden>Continuar con equipos</button>
+            </div>
+          </section>
+
+          <section class="configurator-panel" data-config-panel="equipos">
+            <div class="configurator-panel__header">
+              <h4>Equipos autorizados</h4>
+              <p class="muted">Los usuarios no administradores solo verán el reporte si pertenecen a alguno de los equipos asignados.</p>
+            </div>
+
+            <div class="form-grid form-compact">
+              <div class="field field--full">
+                <label for="cfgReporteEquiposFiltro">Buscar equipo</label>
+                <input id="cfgReporteEquiposFiltro" type="text" placeholder="Filtrar equipos..." />
+              </div>
+              <div class="field field--full">
+                <label>Equipos</label>
+                <div id="cfgReporteEquiposChecks" class="checks-grid checks-compact checks-grid--cards"></div>
+              </div>
+              <div class="field field--full configurator-actions">
+                <button type="button" id="btnCfgGuardarEquipos" class="btn btn--primary btn--inline">Guardar asignación</button>
+                <button type="button" id="btnCfgOpenEquiposAdmin" class="btn btn--ghost btn--inline">Abrir maestro de equipos</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="configurator-panel" data-config-panel="revision">
+            <div class="configurator-panel__header">
+              <h4>Revisión</h4>
+              <p class="muted">Resumen calculado en frontend antes de finalizar.</p>
+            </div>
+
+            <div id="cfgReviewGrid" class="configurator-review-grid">
+              <div class="result-empty">Aún no hay un reporte seleccionado para resumir.</div>
+            </div>
+
+            <div class="configurator-actions">
+              <button type="button" id="btnCfgFinalizar" class="btn btn--primary btn--inline">Finalizar configuración</button>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="adminEquipoModal" class="modal" style="display:none;">
+    <div class="modal__backdrop" id="btnCloseAdmEquipoModalBg"></div>
+    <div class="modal__panel modal__panel--configurator modal-compact admin-compact">
+      <div class="card card--compact card-compact configurator-shell section-compact">
+        <div class="card__header card__header--between configurator-header">
+          <div>
+            <h3 id="adminEquipoModalTitle">Configurar equipo</h3>
+            <p id="cfgEquipoContextText" class="muted">Guarda primero el equipo para habilitar sus relaciones de acceso.</p>
           </div>
-          <div class="field">
-            <label for="admEditRepReqInput">Requiere input</label>
-            <select id="admEditRepReqInput">
-              <option value="1">Sí</option>
-              <option value="0">No</option>
-            </select>
+          <div class="inline-controls">
+            <span id="cfgEquipoIdentity" class="badge badge--neutral">Equipo nuevo</span>
+            <button type="button" id="btnCloseAdmEquipoModal" class="btn btn--ghost btn--sm">Cerrar</button>
           </div>
-          <div class="field">
-            <label for="admEditRepActivo">Activo</label>
-            <select id="admEditRepActivo">
-              <option value="1">Sí</option>
-              <option value="0">No</option>
-            </select>
-          </div>
-          <div class="field field--full">
-            <label for="admEditRepRutaOutput">Ruta output base</label>
-            <input id="admEditRepRutaOutput" type="text" />
-          </div>
-          <div class="field field--full">
-            <label for="admEditRepParametrosEjemplo">Parámetros JSON de ejemplo</label>
-            <textarea id="admEditRepParametrosEjemplo" rows="6" class="mono text-sm"></textarea>
-          </div>
-          <div class="field">
-            <label for="admEditRepTipos">Tipos permitidos</label>
-            <input id="admEditRepTipos" type="text" placeholder="csv;xlsx" />
-          </div>
-          <div class="field">
-            <label for="admEditRepComando">Comando</label>
-            <input id="admEditRepComando" type="text" placeholder="ruta del .bat a ejecutar" />
-          </div>
-          <div class="field field--full">
-            <button type="submit" class="btn btn--primary btn--inline">Guardar cambios</button>
-          </div>
-        </form>
+        </div>
+
+        <div class="configurator-steps" id="cfgEquipoStepsNav">
+          <button type="button" class="configurator-step is-active" data-equipo-config-step="datos">1. Datos del equipo</button>
+          <button type="button" class="configurator-step is-disabled" data-equipo-config-step="usuarios">2. Usuarios del equipo</button>
+          <button type="button" class="configurator-step is-disabled" data-equipo-config-step="reportes">3. Reportes del equipo</button>
+          <button type="button" class="configurator-step is-disabled" data-equipo-config-step="resumen">4. Resumen</button>
+        </div>
+
+        <div class="configurator-body">
+          <section class="configurator-panel is-active" data-equipo-config-panel="datos">
+            <div class="configurator-panel__header">
+              <h4>Datos del equipo</h4>
+              <p class="muted">Crea o actualiza el equipo base antes de configurar usuarios y reportes relacionados.</p>
+            </div>
+
+            <form id="formAdminEquipoEdit" class="form-grid form-compact form-layout-admin">
+              <input id="admCfgEquipoId" type="hidden" />
+
+              <section class="form-section field--full">
+                <div class="form-section__header">
+                  <h5>Identificación</h5>
+                  <p class="muted">Define el nombre visible del equipo y su estado operativo.</p>
+                </div>
+                <div class="form-layout-grid">
+                  <div class="field field--span-2 field--readonly-meta" id="admCfgEquipoIdField" hidden>
+                    <label for="admCfgEquipoIdView">ID</label>
+                    <input id="admCfgEquipoIdView" type="text" readonly />
+                  </div>
+                  <div class="field field--span-8">
+                    <label for="admCfgEquipoNombre">Nombre de equipo</label>
+                    <input id="admCfgEquipoNombre" type="text" placeholder="EQUIPO_OPERACIONES" />
+                  </div>
+                  <div class="field field--span-2">
+                    <label for="admCfgEquipoActivo">Estado</label>
+                    <select id="admCfgEquipoActivo">
+                      <option value="1">Activo</option>
+                      <option value="0">Inactivo</option>
+                    </select>
+                  </div>
+                </div>
+              </section>
+
+              <div class="field field--full configurator-actions">
+                <button type="submit" id="btnSubmitAdminEquipoModal" class="btn btn--primary btn--inline">Guardar equipo</button>
+                <button type="button" id="btnCfgEquipoGoToUsuarios" class="btn btn--ghost btn--inline">Siguiente: usuarios</button>
+              </div>
+            </form>
+          </section>
+
+          <section class="configurator-panel" data-equipo-config-panel="usuarios">
+            <div class="configurator-panel__header">
+              <h4 id="cfgEquipoUsuariosHeading">Usuarios del equipo</h4>
+              <p class="muted">Selecciona qué usuarios pertenecen al equipo actual.</p>
+            </div>
+
+            <div class="form-grid form-compact access-form-grid form-layout-admin">
+              <section class="form-section field--full">
+                <div id="admEquipoUsuariosInactiveNotice" class="access-context-banner" hidden>
+                  <span class="access-context-banner__label">Equipo inactivo</span>
+                  <strong>Este equipo está inactivo. Puedes configurar sus usuarios y reportes, pero no concederá acceso hasta que sea activado.</strong>
+                </div>
+              </section>
+
+              <section class="form-section field--full">
+                <div class="form-layout-grid">
+                  <div class="field field--span-8">
+                    <label for="admEquipoUsuariosFiltro">Buscar usuario</label>
+                    <input id="admEquipoUsuariosFiltro" type="text" placeholder="Filtrar por usuario..." />
+                  </div>
+                  <div class="field field--span-4">
+                    <label>Resumen rápido</label>
+                    <div class="access-selection-summary">
+                      <span class="muted">Usuarios seleccionados</span>
+                      <strong id="admEquipoUsuariosSeleccionInfo">0 usuarios</strong>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="form-section field--full">
+                <div class="form-layout-grid">
+                  <div class="field field--span-12">
+                    <label>Usuarios disponibles</label>
+                    <div id="admEquipoUsuariosChecks" class="checks-grid checks-compact checks-grid--cards"></div>
+                  </div>
+                </div>
+              </section>
+
+              <div class="field field--full configurator-actions">
+                <button type="button" id="btnCfgEquipoBackToDatos" class="btn btn--ghost btn--inline">Atrás</button>
+                <button type="button" id="btnGuardarEquipoUsuarios" class="btn btn--primary btn--inline">Guardar usuarios del equipo</button>
+                <button type="button" id="btnCfgEquipoGoToReportes" class="btn btn--ghost btn--inline">Siguiente: reportes</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="configurator-panel" data-equipo-config-panel="reportes">
+            <div class="configurator-panel__header">
+              <h4 id="cfgEquipoReportesHeading">Reportes del equipo</h4>
+              <p class="muted">Selecciona qué reportes quedarán habilitados para el equipo actual.</p>
+            </div>
+
+            <div class="form-grid form-compact access-form-grid form-layout-admin">
+              <section class="form-section field--full">
+                <div id="admEquipoReportesInactiveNotice" class="access-context-banner" hidden>
+                  <span class="access-context-banner__label">Equipo inactivo</span>
+                  <strong>Este equipo está inactivo. Puedes configurar sus usuarios y reportes, pero no concederá acceso hasta que sea activado.</strong>
+                </div>
+              </section>
+
+              <section class="form-section field--full">
+                <div class="form-layout-grid">
+                  <div class="field field--span-8">
+                    <label for="admEquipoReportesFiltro">Buscar reporte</label>
+                    <input id="admEquipoReportesFiltro" type="text" placeholder="Filtrar por código o nombre..." />
+                  </div>
+                  <div class="field field--span-4">
+                    <label>Resumen rápido</label>
+                    <div class="access-selection-summary">
+                      <span class="muted">Reportes seleccionados</span>
+                      <strong id="admEquipoReportesSeleccionInfo">0 reportes</strong>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="form-section field--full">
+                <div class="form-layout-grid">
+                  <div class="field field--span-12">
+                    <label>Reportes disponibles</label>
+                    <div id="admEquipoReportesChecks" class="checks-grid checks-compact checks-grid--cards"></div>
+                  </div>
+                </div>
+              </section>
+
+              <div class="field field--full configurator-actions">
+                <button type="button" id="btnCfgEquipoBackToUsuarios" class="btn btn--ghost btn--inline">Atrás</button>
+                <button type="button" id="btnGuardarEquipoReportes" class="btn btn--primary btn--inline">Guardar reportes del equipo</button>
+                <button type="button" id="btnCfgEquipoGoToResumen" class="btn btn--ghost btn--inline">Siguiente: resumen</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="configurator-panel" data-equipo-config-panel="resumen">
+            <div class="configurator-panel__header">
+              <h4>Resumen del equipo</h4>
+              <p class="muted">Visualiza el impacto actual del equipo sobre usuarios y reportes asociados.</p>
+            </div>
+
+            <div class="form-grid form-compact access-form-grid form-layout-admin">
+              <section class="form-section field--full">
+                <div id="admEquipoResumenInactiveNotice" class="access-context-banner" hidden>
+                  <span class="access-context-banner__label">Equipo inactivo</span>
+                  <strong>Este equipo está inactivo. Puedes configurar sus usuarios y reportes, pero no concederá acceso hasta que sea activado.</strong>
+                </div>
+              </section>
+
+              <section class="form-section field--full">
+                <div id="admEquipoResumenResult" class="access-summary-result">
+                  <div class="result-empty">Guarda el equipo y configura usuarios y reportes para ver el resumen.</div>
+                </div>
+              </section>
+
+              <div class="field field--full configurator-actions">
+                <button type="button" id="btnCfgEquipoBackToReportes" class="btn btn--ghost btn--inline">Atrás</button>
+                <button type="button" id="btnCfgEquipoFinalizar" class="btn btn--primary btn--inline">Finalizar</button>
+              </div>
+            </div>
+          </section>
+        </div>
       </div>
     </div>
   </div>
 
   <div id="adminTablaConsultaModal" class="modal" style="display:none;">
     <div class="modal__backdrop" id="btnCloseAdmCtModalBg"></div>
-    <div class="modal__panel modal__panel--wide">
-      <div class="card card--compact">
-        <div class="card__header card__header--between">
-          <h3>Editar tabla consultable</h3>
-          <button type="button" id="btnCloseAdmCtModal" class="btn btn--ghost btn--sm">Cerrar</button>
+    <div class="modal__panel modal__panel--configurator modal-compact admin-compact">
+      <div class="card card--compact card-compact configurator-shell section-compact">
+        <div class="card__header card__header--between configurator-header">
+          <div>
+            <h3 id="adminTablaConsultaModalTitle">Configurar tabla consultable</h3>
+            <p id="cfgTablaContextText" class="muted">Completa los datos base para iniciar la configuración.</p>
+          </div>
+          <div class="inline-controls">
+            <span id="cfgTablaIdentity" class="badge badge--neutral">Tabla nueva</span>
+            <button type="button" id="btnCloseAdmCtModal" class="btn btn--ghost btn--sm">Cerrar</button>
+          </div>
         </div>
 
-        <form id="formAdminTablaConsultaEdit" class="form-grid">
+        <div class="configurator-steps" id="cfgTablaStepsNav">
+          <button type="button" class="configurator-step is-active" data-tabla-config-step="datos">1. Datos de la tabla</button>
+          <button type="button" class="configurator-step is-disabled" data-tabla-config-step="consulta">2. Consulta permitida</button>
+          <button type="button" class="configurator-step is-disabled" data-tabla-config-step="equipos">3. Equipos autorizados</button>
+          <button type="button" class="configurator-step is-disabled" data-tabla-config-step="revision">4. Revisión</button>
+        </div>
+
+        <form id="formAdminTablaConsultaEdit" class="form-grid form-compact form-layout-admin">
           <input id="admEditCtId" type="hidden" />
-          <div class="field">
-            <label for="admEditCtIdView">ID</label>
-            <input id="admEditCtIdView" type="text" readonly />
-          </div>
-          <div class="field">
-            <label for="admEditCtCodigo">Código</label>
-            <input id="admEditCtCodigo" type="text" />
-          </div>
-          <div class="field">
-            <label for="admEditCtNombre">Nombre</label>
-            <input id="admEditCtNombre" type="text" />
-          </div>
-          <div class="field field--full">
-            <label for="admEditCtTablaBd">Tabla física (BD)</label>
-            <input id="admEditCtTablaBd" type="text" />
-          </div>
-          <div class="field field--full">
-            <label for="admEditCtDescripcion">Descripción</label>
-            <textarea id="admEditCtDescripcion" rows="2"></textarea>
-          </div>
-          <div class="field field--full">
-            <label for="admEditCtColsPermitidas">Columnas permitidas para filtro (separadas por ;)</label>
-            <input id="admEditCtColsPermitidas" type="text" />
-          </div>
-          <div class="field field--full">
-            <label for="admEditCtColsResultado">Columnas de resultado (separadas por ;, opcional)</label>
-            <input id="admEditCtColsResultado" type="text" />
-          </div>
-          <div class="field">
-            <label for="admEditCtActivo">Activo</label>
-            <select id="admEditCtActivo">
-              <option value="1">Sí</option>
-              <option value="0">No</option>
-            </select>
-          </div>
-          <div class="field field--full">
-            <button type="submit" class="btn btn--primary btn--inline">Guardar cambios</button>
+
+          <div class="configurator-body">
+            <section class="configurator-panel is-active" data-tabla-config-panel="datos">
+              <div class="configurator-panel__header">
+                <h4>Datos de la tabla</h4>
+                <p class="muted">Identifica la tabla funcional dentro del catálogo antes de abrir permisos y revisión.</p>
+              </div>
+
+              <section class="form-section field--full">
+                <div class="form-section__header">
+                  <h5>Identificación</h5>
+                  <p class="muted">Mantén código y nombre visibles como referencia principal del whitelist.</p>
+                </div>
+                <div class="form-layout-grid">
+                  <div class="field field--span-2 field--readonly-meta" id="admEditCtIdField" hidden>
+                    <label for="admEditCtIdView">ID</label>
+                    <input id="admEditCtIdView" type="text" readonly />
+                  </div>
+                  <div class="field field--span-3">
+                    <label for="admEditCtCodigo">Código</label>
+                    <input id="admEditCtCodigo" type="text" placeholder="TAB_CLIENTES" pattern="[A-Za-z0-9_]+" />
+                  </div>
+                  <div class="field field--span-7">
+                    <label for="admEditCtNombre">Nombre</label>
+                    <input id="admEditCtNombre" type="text" placeholder="Clientes" />
+                  </div>
+                </div>
+              </section>
+
+              <section class="form-section field--full">
+                <div class="form-section__header">
+                  <h5>Estado y contexto</h5>
+                  <p class="muted">Describe el uso funcional y si la tabla seguirá disponible para consulta.</p>
+                </div>
+                <div class="form-layout-grid">
+                  <div class="field field--span-3">
+                    <label for="admEditCtActivo">Activo</label>
+                    <select id="admEditCtActivo">
+                      <option value="1">Sí</option>
+                      <option value="0">No</option>
+                    </select>
+                  </div>
+                  <div class="field field--span-9">
+                    <label for="admEditCtDescripcion">Descripción</label>
+                    <textarea id="admEditCtDescripcion" rows="2" placeholder="Describe cuándo debe usarse esta tabla y qué cubre."></textarea>
+                  </div>
+                </div>
+              </section>
+
+              <div class="field field--full configurator-actions">
+                <button type="submit" id="btnSubmitAdminTablaConsultaModal" class="btn btn--primary btn--inline">Guardar cambios</button>
+                <button type="button" id="btnCfgTablaGoToConsulta" class="btn btn--ghost btn--inline">Continuar con consulta</button>
+              </div>
+            </section>
+
+            <section class="configurator-panel" data-tabla-config-panel="consulta">
+              <div class="configurator-panel__header">
+                <h4>Consulta permitida</h4>
+                <p class="muted">Define la tabla física y las columnas que podrán filtrarse o verse en resultados.</p>
+              </div>
+
+              <section class="form-section field--full">
+                <div class="form-section__header">
+                  <h5>Definición técnica</h5>
+                  <p class="muted">La tabla física identifica el origen real; las columnas gobiernan el alcance visible del usuario.</p>
+                </div>
+                <div class="form-layout-grid">
+                  <div class="field field--span-12">
+                    <label for="admEditCtTablaBd">Tabla física (BD)</label>
+                    <input id="admEditCtTablaBd" type="text" placeholder="CLIENTES_GCI" />
+                  </div>
+                  <div class="field field--span-12">
+                    <label for="admEditCtColsPermitidas">Columnas permitidas para filtro (separadas por ;)</label>
+                    <input id="admEditCtColsPermitidas" type="text" placeholder="CLIENTE_ID;NOMBRE;ESTADO;FECHA_ALTA" />
+                  </div>
+                  <div class="field field--span-12">
+                    <label for="admEditCtColsResultado">Columnas de resultado (separadas por ;, opcional)</label>
+                    <input id="admEditCtColsResultado" type="text" placeholder="CLIENTE_ID;NOMBRE;ESTADO" />
+                  </div>
+                </div>
+              </section>
+
+              <div class="field field--full configurator-actions">
+                <button type="submit" id="btnSubmitAdminTablaConsultaConsulta" class="btn btn--primary btn--inline">Guardar cambios</button>
+                <button type="button" id="btnCfgTablaGoToEquipos" class="btn btn--ghost btn--inline">Continuar con equipos</button>
+              </div>
+            </section>
+
+            <section class="configurator-panel" data-tabla-config-panel="equipos">
+              <div class="configurator-panel__header">
+                <h4>Equipos autorizados</h4>
+                <p class="muted">Solo los usuarios de los equipos seleccionados verán esta tabla en la vista de consulta.</p>
+              </div>
+
+              <div class="form-grid form-compact">
+                <div class="field field--full">
+                  <div class="access-selection-summary">
+                    <div>
+                      <span class="access-summary-card__label">Asignación actual</span>
+                      <strong id="admTablaEquiposSeleccionInfo">0 equipos</strong>
+                    </div>
+                    <span class="muted">Este paso controla visibilidad operativa, no la definición técnica del whitelist.</span>
+                  </div>
+                </div>
+                <div class="field field--full">
+                  <label for="admCtEquiposFiltro">Buscar equipo</label>
+                  <input id="admCtEquiposFiltro" type="text" placeholder="Filtrar equipos..." />
+                </div>
+                <div class="field field--full">
+                  <label>Equipos</label>
+                  <div id="admCtEquiposChecks" class="checks-grid checks-compact checks-grid--cards"></div>
+                </div>
+                <div class="field field--full configurator-actions">
+                  <button type="button" id="btnAdmCtGuardarEquipos" class="btn btn--primary btn--inline">Guardar asignación</button>
+                  <button type="button" id="btnCfgTablaOpenEquiposAdmin" class="btn btn--ghost btn--inline">Abrir maestro de equipos</button>
+                </div>
+              </div>
+            </section>
+
+            <section class="configurator-panel" data-tabla-config-panel="revision">
+              <div class="configurator-panel__header">
+                <h4>Revisión</h4>
+                <p class="muted">Resumen calculado en frontend antes de cerrar la configuración.</p>
+              </div>
+
+              <div id="cfgTablaReviewGrid" class="configurator-review-grid">
+                <div class="result-empty">Aún no hay una tabla seleccionada para resumir.</div>
+              </div>
+
+              <div class="configurator-actions">
+                <button type="button" id="btnCfgTablaFinalizar" class="btn btn--primary btn--inline">Finalizar configuración</button>
+              </div>
+            </section>
           </div>
         </form>
       </div>

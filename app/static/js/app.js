@@ -7,6 +7,9 @@
     adminUsuarios: [],
     adminEquipos: [],
     adminUsuarioEquipoIds: [],
+    adminUsuarioEquiposModal: {
+      selectedUser: null,
+    },
     adminReporteEquipoIds: [],
     adminTablasConsulta: [],
     adminTablaConsultaEquipoIds: [],
@@ -16,11 +19,40 @@
     misPageSize: 10,
     admRepCurrentPage: 1,
     admRepPageSize: 10,
+    admCtCurrentPage: 1,
+    admCtPageSize: 10,
+    admEquipoCurrentPage: 1,
+    admEquipoPageSize: 10,
     me: null,
     autoRefreshTimer: null,
     apiBase: window.location.origin,
     selectedRequestId: null,
     lastParametrosEjemploAplicado: "",
+    adminAccessSummary: {
+      usuarioEquipoIds: [],
+      reporteEquipoIds: [],
+    },
+    adminEquipoConfigurator: {
+      mode: "create",
+      currentStep: "datos",
+      selectedEquipo: null,
+      selectedUsuarioIds: [],
+      selectedReporteIds: [],
+      usuariosDisponibles: [],
+      reportesDisponibles: [],
+      resumen: null,
+    },
+    adminConfigurator: {
+      mode: "create",
+      step: "datos",
+      selectedReport: null,
+      rutas: [],
+    },
+    adminTablaConsultaConfigurator: {
+      mode: "create",
+      step: "datos",
+      selectedTabla: null,
+    },
   };
 
   const AUTH_STORAGE_KEY = "reporteador_token";
@@ -60,7 +92,6 @@
     const isAdmin = me?.roles?.includes("ADMIN") || me?.username === "admin";
 
     const adminTabs = [
-      '.menu__item[data-tab="tab-admin-rutas"]',
       '.menu__item[data-tab="tab-admin-reportes"]',
       '.menu__item[data-tab="tab-admin-equipos"]',
       '.menu__item[data-tab="tab-admin-tablas-consulta"]',
@@ -111,9 +142,265 @@
     if (modal) modal.style.display = "";
   }
 
+  function openAdminEquipoModal() {
+    const modal = $("adminEquipoModal");
+    if (modal) modal.style.display = "";
+  }
+
+  function openAdminUsuarioEquiposModal() {
+    const modal = $("adminUsuarioEquiposModal");
+    if (modal) modal.style.display = "";
+  }
+
   function closeAdminReporteModal() {
     const modal = $("adminReporteModal");
     if (modal) modal.style.display = "none";
+    state.adminConfigurator.mode = "create";
+    state.adminConfigurator.step = "datos";
+    state.adminConfigurator.selectedReport = null;
+    state.adminConfigurator.rutas = [];
+  }
+
+  function closeAdminEquipoModal() {
+    const modal = $("adminEquipoModal");
+    if (modal) modal.style.display = "none";
+    state.adminEquipoConfigurator.mode = "create";
+    state.adminEquipoConfigurator.currentStep = "datos";
+    state.adminEquipoConfigurator.selectedEquipo = null;
+    state.adminEquipoConfigurator.selectedUsuarioIds = [];
+    state.adminEquipoConfigurator.selectedReporteIds = [];
+    state.adminEquipoConfigurator.resumen = null;
+  }
+
+  function closeAdminUsuarioEquiposModal() {
+    const modal = $("adminUsuarioEquiposModal");
+    if (modal) modal.style.display = "none";
+    state.adminUsuarioEquiposModal.selectedUser = null;
+    state.adminUsuarioEquipoIds = [];
+    if ($("admUsuarioEquiposFiltro")) $("admUsuarioEquiposFiltro").value = "";
+  }
+
+  function resetAdminReporteModalForCreate() {
+    $("adminReporteModalTitle").textContent = "Nuevo reporte";
+    $("btnSubmitAdminReporteModal").textContent = "Crear reporte";
+    $("admEditRepId").value = "";
+    $("admEditRepIdView").value = "";
+    $("admEditRepCodigo").value = "";
+    $("admEditRepNombre").value = "";
+    $("admEditRepDescripcion").value = "";
+    $("admEditRepReqInput").value = "1";
+    $("admEditRepActivo").value = "1";
+    $("admEditRepRutaOutput").value = "";
+    $("admEditRepParametrosEjemplo").value = "";
+    $("admEditRepTipos").value = "";
+    $("admEditRepComando").value = "";
+    setAdminReporteIdFieldVisibility(false);
+  }
+
+  function prepareAdminReporteModalForEdit(row) {
+    $("adminReporteModalTitle").textContent = "Editar reporte";
+    $("btnSubmitAdminReporteModal").textContent = "Guardar cambios";
+    setAdminReporteIdFieldVisibility(true);
+    $("admEditRepId").value = row.id;
+    $("admEditRepIdView").value = row.id;
+    $("admEditRepCodigo").value = row.codigo || "";
+    $("admEditRepNombre").value = row.nombre || "";
+    $("admEditRepDescripcion").value = row.descripcion || "";
+    $("admEditRepReqInput").value = String(row.requiere_input_archivo ?? 0);
+    $("admEditRepActivo").value = String(row.activo ?? 0);
+    $("admEditRepRutaOutput").value = row.ruta_output_base || "";
+    $("admEditRepParametrosEjemplo").value = normalizeJsonExampleText(row.parametros_ejemplo_json || "");
+    $("admEditRepTipos").value = row.tipos_permitidos || "";
+    $("admEditRepComando").value = row.comando || "";
+  }
+
+  function getAdminReportePayloadFromForm() {
+    const requiereInput = Number($("admEditRepReqInput")?.value || 0) === 1;
+    return {
+      codigo: $("admEditRepCodigo")?.value?.trim(),
+      nombre: $("admEditRepNombre")?.value?.trim(),
+      descripcion: $("admEditRepDescripcion")?.value?.trim() || null,
+      requiere_input_archivo: requiereInput ? 1 : 0,
+      activo: Number($("admEditRepActivo")?.value || 0),
+      ruta_output_base: $("admEditRepRutaOutput")?.value?.trim() || null,
+      parametros_ejemplo_json: $("admEditRepParametrosEjemplo")?.value?.trim() || null,
+      tipos_permitidos: requiereInput ? ($("admEditRepTipos")?.value?.trim() || null) : null,
+      comando: $("admEditRepComando")?.value?.trim() || null,
+    };
+  }
+
+  function getConfiguratorSelectedReport() {
+    return state.adminConfigurator.selectedReport || null;
+  }
+
+  function setConfiguratorSelectedReport(report) {
+    state.adminConfigurator.selectedReport = report || null;
+    const selected = getConfiguratorSelectedReport();
+    const identity = $("cfgReportIdentity");
+    const context = $("cfgReportContextText");
+
+    if (identity) {
+      identity.textContent = selected?.id
+        ? `ID ${selected.id}`
+        : "Reporte nuevo";
+    }
+
+    if (context) {
+      context.textContent = selected?.id
+        ? `Configurando ${selected.codigo || `reporte ${selected.id}`} · ${selected.nombre || "sin nombre descriptivo"}.`
+        : "Completa los datos base para iniciar la configuración.";
+    }
+  }
+
+  function isConfiguratorInputRequired() {
+    return Number($("admEditRepReqInput")?.value || getConfiguratorSelectedReport()?.requiere_input_archivo || 0) === 1;
+  }
+
+  function setAdminReporteIdFieldVisibility(isVisible) {
+    const field = $("admEditRepIdField");
+    if (!field) return;
+    field.hidden = !isVisible;
+    field.style.display = isVisible ? "" : "none";
+    field.setAttribute("aria-hidden", isVisible ? "false" : "true");
+  }
+
+  function syncAdminReporteIdVisibility() {
+    setAdminReporteIdFieldVisibility(!!(state.adminConfigurator.mode === "edit" && getConfiguratorSelectedReport()?.id));
+  }
+
+  function syncConfiguratorInputFields() {
+    const requiereInput = isConfiguratorInputRequired();
+    const tiposField = $("admEditRepTiposField");
+    const tiposInput = $("admEditRepTipos");
+    if (tiposField) {
+      tiposField.hidden = !requiereInput;
+      tiposField.style.display = requiereInput ? "" : "none";
+      tiposField.setAttribute("aria-hidden", requiereInput ? "false" : "true");
+    }
+    if (tiposInput) {
+      tiposInput.disabled = !requiereInput;
+      if (!requiereInput) {
+        tiposInput.value = "";
+      }
+    }
+  }
+
+  function validateAdminReporteCodigo() {
+    const codigoInput = $("admEditRepCodigo");
+    if (!codigoInput) return true;
+    const value = (codigoInput.value || "").trim();
+    if (!value) {
+      codigoInput.setCustomValidity("El código es obligatorio.");
+      return false;
+    }
+    if (!/^[A-Za-z0-9_-]+$/.test(value)) {
+      codigoInput.setCustomValidity("El código solo puede contener letras, números, guion y guion bajo, sin espacios ni tildes.");
+      return false;
+    }
+    codigoInput.setCustomValidity("");
+    return true;
+  }
+
+  function validateAdminReporteForm() {
+    const nombreInput = $("admEditRepNombre");
+    if (nombreInput) {
+      const hasName = !!(nombreInput.value || "").trim();
+      nombreInput.setCustomValidity(hasName ? "" : "El nombre es obligatorio.");
+    }
+    const isCodigoValid = validateAdminReporteCodigo();
+    const form = $("formAdminReporteEdit");
+    return !!(form?.reportValidity() && isCodigoValid);
+  }
+
+  function syncConfiguratorFlowActions() {
+    const hasReport = canUseAdvancedConfiguratorSteps();
+    const requiereInput = isConfiguratorInputRequired();
+    const btnDatos = $("btnCfgGoToRutas");
+    const btnRutas = $("btnCfgGoToEquipos");
+    const rutasActivas = (state.adminConfigurator.rutas || []).filter((r) => Number(r.activo) === 1).length;
+
+    if (btnDatos) {
+      btnDatos.textContent = requiereInput ? "Continuar con rutas" : "Continuar con equipos";
+      btnDatos.disabled = !hasReport;
+    }
+
+    if (btnRutas) {
+      btnRutas.hidden = !(hasReport && requiereInput && rutasActivas > 0);
+    }
+  }
+
+  function canUseAdvancedConfiguratorSteps() {
+    const report = getConfiguratorSelectedReport();
+    return !!(report?.id && report?.codigo);
+  }
+
+  function getConfiguratorStepAvailability() {
+    const hasReport = canUseAdvancedConfiguratorSteps();
+    return {
+      datos: true,
+      rutas: hasReport,
+      equipos: hasReport,
+      revision: hasReport,
+    };
+  }
+
+  function setConfiguratorStep(stepName) {
+    const availability = getConfiguratorStepAvailability();
+    const targetStep = availability[stepName] ? stepName : "datos";
+    state.adminConfigurator.step = targetStep;
+
+    document.querySelectorAll("[data-config-step]").forEach((btn) => {
+      const step = btn.dataset.configStep;
+      const enabled = !!availability[step];
+      btn.classList.toggle("is-active", step === targetStep);
+      btn.classList.toggle("is-disabled", !enabled);
+      btn.disabled = !enabled;
+    });
+
+    document.querySelectorAll("[data-config-panel]").forEach((panel) => {
+      panel.classList.toggle("is-active", panel.dataset.configPanel === targetStep);
+    });
+
+    syncConfiguratorFlowActions();
+  }
+
+  function renderConfiguratorReview() {
+    const wrap = $("cfgReviewGrid");
+    if (!wrap) return;
+
+    const selected = getConfiguratorSelectedReport();
+    const report = selected?.id
+      ? { ...selected, ...getAdminReportePayloadFromForm(), id: selected.id }
+      : null;
+    if (!report?.id) {
+      wrap.innerHTML = `<div class="result-empty">Aún no hay un reporte seleccionado para resumir.</div>`;
+      return;
+    }
+
+    const equiposAsignados = (state.adminReporteEquipoIds || []).length;
+    const rutasConfiguradas = (state.adminConfigurator.rutas || []).filter((r) => Number(r.activo) === 1).length;
+    const requiereInput = Number(report.requiere_input_archivo) === 1;
+
+    wrap.innerHTML = `
+      <div class="kv"><label>ID</label><div class="mono">${esc(report.id)}</div></div>
+      <div class="kv"><label>Código</label><div class="mono">${esc(report.codigo || "-")}</div></div>
+      <div class="kv"><label>Nombre</label><div>${esc(report.nombre || "-")}</div></div>
+      <div class="kv"><label>Activo</label><div>${Number(report.activo) === 1 ? "Sí" : "No"}</div></div>
+      <div class="kv"><label>Requiere input</label><div>${requiereInput ? "Sí" : "No"}</div></div>
+      <div class="kv"><label>Rutas configuradas</label><div>${requiereInput ? rutasConfiguradas : "No aplica"}</div></div>
+      <div class="kv"><label>Equipos asignados</label><div>${equiposAsignados}</div></div>
+      <div class="kv"><label>Comando</label><div>${esc(report.comando || "Sin comando configurado")}</div></div>
+    `;
+  }
+
+  function renderConfiguratorEquiposChecks() {
+    renderChecks(
+      "cfgReporteEquiposChecks",
+      state.adminEquipos,
+      state.adminReporteEquipoIds,
+      "adminReporteEquipoIds",
+      $("cfgReporteEquiposFiltro")?.value || ""
+    );
   }
 
   function openAdminTablaConsultaModal() {
@@ -124,6 +411,10 @@
   function closeAdminTablaConsultaModal() {
     const modal = $("adminTablaConsultaModal");
     if (modal) modal.style.display = "none";
+    state.adminTablaConsultaConfigurator.mode = "create";
+    state.adminTablaConsultaConfigurator.step = "datos";
+    state.adminTablaConsultaConfigurator.selectedTabla = null;
+    state.adminTablaConsultaEquipoIds = [];
   }
 
   function openConsultaResultadosModal() {
@@ -164,6 +455,8 @@
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
 
+  const isAdminUser = () => state.me?.roles?.includes("ADMIN") || state.me?.username === "admin";
+
   function normalizeJsonExampleText(txt) {
     const raw = (txt || "").trim();
     if (!raw) return "";
@@ -203,14 +496,76 @@
     }
   }
 
-  function showAlert(message, type = "info") {
-    const wrap = $("alerts");
-    const el = document.createElement("div");
-    el.className = `alert alert--${type}`;
-    el.innerText = message;
-    wrap.prepend(el);
-    setTimeout(() => el.remove(), 4500);
+  function normalizeToastType(type) {
+    const normalized = String(type || "info").toLowerCase();
+    if (normalized === "ok") return "success";
+    if (normalized === "err") return "error";
+    if (["success", "error", "warning", "info"].includes(normalized)) return normalized;
+    return "info";
   }
+
+  function showToast(message, type = "info", options = {}) {
+    const wrap = $("toastContainer");
+    if (!wrap || !message) return null;
+
+    const normalizedType = normalizeToastType(type);
+    const duration = Number(options.duration);
+    const autoCloseAfter = Number.isFinite(duration) ? duration : 4500;
+
+    const toast = document.createElement("div");
+    toast.className = `app-toast ${normalizedType}`;
+    toast.setAttribute("role", normalizedType === "error" || normalizedType === "warning" ? "alert" : "status");
+
+    const body = document.createElement("div");
+    body.className = "app-toast__body";
+
+    if (options.title) {
+      const title = document.createElement("strong");
+      title.className = "app-toast__title";
+      title.textContent = String(options.title);
+      body.appendChild(title);
+    }
+
+    const text = document.createElement("p");
+    text.className = "app-toast__message";
+    text.textContent = String(message);
+    body.appendChild(text);
+
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "app-toast__close";
+    closeBtn.setAttribute("aria-label", "Cerrar notificación");
+    closeBtn.textContent = "×";
+
+    let removed = false;
+    let timeoutId = null;
+    const removeToast = () => {
+      if (removed) return;
+      removed = true;
+      if (timeoutId) clearTimeout(timeoutId);
+      toast.classList.add("is-closing");
+      window.setTimeout(() => toast.remove(), 180);
+    };
+
+    closeBtn.addEventListener("click", removeToast);
+
+    toast.appendChild(body);
+    toast.appendChild(closeBtn);
+    wrap.prepend(toast);
+
+    if (autoCloseAfter > 0) {
+      timeoutId = window.setTimeout(removeToast, autoCloseAfter);
+    }
+
+    return { close: removeToast, element: toast };
+  }
+
+  function showAlert(message, type = "info", options = {}) {
+    return showToast(message, type, options);
+  }
+
+  window.showToast = showToast;
+  window.showAlert = showAlert;
 
   async function api(path, opts = {}) {
     const token = getToken();
@@ -813,6 +1168,8 @@
       if (ev.key === "Escape") {
         closeNuevaModal();
         closeAdminReporteModal();
+        closeAdminEquipoModal();
+        closeAdminUsuarioEquiposModal();
         closeAdminTablaConsultaModal();
         closeConsultaResultadosModal();
       }
@@ -828,7 +1185,6 @@
     setupNuevaSolicitud();
     setupMisSolicitudes();
     setupDetalle();
-    setupAdminRutas();
     setupAdminReportes();
     setupAdminEquipos();
     setupAdminTablasConsulta();
@@ -837,7 +1193,6 @@
 
     await bootstrapAuth();
     await loadHealth();
-    await fillAdminReportesSelect();
 
     if ($("parametros_help")) {
       $("parametros_help").textContent = "El ejemplo cambia según el reporte configurado.";
@@ -872,6 +1227,76 @@
     }
   }
 
+  async function getAdminRutasByCodigo(codigo) {
+    return api(`/admin/reportes/${encodeURIComponent(codigo)}/carpetas`);
+  }
+
+  async function createAdminRutaByCodigo(codigo, rutaBase) {
+    return api(`/admin/reportes/${encodeURIComponent(codigo)}/carpetas`, {
+      method: "POST",
+      body: JSON.stringify({ ruta_base: rutaBase }),
+    });
+  }
+
+  async function updateAdminRutaById(id, payload) {
+    return api(`/admin/carpetas/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async function getEquiposReporteById(reporteId) {
+    return api(`/admin/reportes/${encodeURIComponent(reporteId)}/equipos`);
+  }
+
+  async function updateEquiposReporteById(reporteId, equipoIds) {
+    return api(`/admin/reportes/${encodeURIComponent(reporteId)}/equipos`, {
+      method: "PUT",
+      body: JSON.stringify({ equipo_ids: (equipoIds || []).map(Number) }),
+    });
+  }
+
+  async function getEquiposUsuarioById(usuarioId) {
+    return api(`/admin/usuarios/${encodeURIComponent(usuarioId)}/equipos`);
+  }
+
+  async function updateEquiposUsuarioById(usuarioId, equipoIds) {
+    return api(`/admin/usuarios/${encodeURIComponent(usuarioId)}/equipos`, {
+      method: "PUT",
+      body: JSON.stringify({ equipo_ids: (equipoIds || []).map(Number) }),
+    });
+  }
+
+  async function getUsuariosEquipoById(equipoId) {
+    return api(`/admin/equipos/${encodeURIComponent(equipoId)}/usuarios`);
+  }
+
+  async function updateUsuariosEquipoById(equipoId, usuarioIds) {
+    return api(`/admin/equipos/${encodeURIComponent(equipoId)}/usuarios`, {
+      method: "PUT",
+      body: JSON.stringify({ usuario_ids: (usuarioIds || []).map(Number) }),
+    });
+  }
+
+  async function getReportesEquipoById(equipoId) {
+    return api(`/admin/equipos/${encodeURIComponent(equipoId)}/reportes`);
+  }
+
+  async function updateReportesEquipoById(equipoId, reporteIds) {
+    return api(`/admin/equipos/${encodeURIComponent(equipoId)}/reportes`, {
+      method: "PUT",
+      body: JSON.stringify({ reporte_ids: (reporteIds || []).map(Number) }),
+    });
+  }
+
+  async function getEquiposResumen() {
+    return api("/admin/equipos/resumen");
+  }
+
+  async function getEquipoResumenById(equipoId) {
+    return api(`/admin/equipos/${encodeURIComponent(equipoId)}/resumen`);
+  }
+
   // ---------- Admin Rutas ----------
   async function fillAdminReportesSelect() {
     const sel = $("adminReporte");
@@ -901,7 +1326,7 @@
     tb.innerHTML = `<tr><td colspan="4" class="table-empty">Cargando...</td></tr>`;
 
     try {
-      const rows = await api(`/admin/reportes/${encodeURIComponent(codigo)}/carpetas`);
+      const rows = await getAdminRutasByCodigo(codigo);
       renderAdminRutas(rows || []);
     } catch (e) {
       tb.innerHTML = `<tr><td colspan="4" class="table-empty">Error al cargar rutas.</td></tr>`;
@@ -924,6 +1349,7 @@
         <td>
           <input
             id="ruta_edit_${esc(r.id)}"
+            class="input-sm"
             type="text"
             value="${esc(r.ruta_base)}"
             style="width:100%;"
@@ -936,10 +1362,10 @@
         </td>
         <td>
           <div class="inline-controls">
-            <button class="btn btn--ghost btn-admin-guardar" data-id="${esc(r.id)}">Guardar</button>
+            <button class="btn btn--ghost btn--sm btn-admin-guardar" data-id="${esc(r.id)}">Guardar</button>
             ${r.activo === 1
-        ? `<button class="btn btn--ghost btn-admin-toggle" data-id="${esc(r.id)}" data-next="0">Desactivar</button>`
-        : `<button class="btn btn--ghost btn-admin-toggle" data-id="${esc(r.id)}" data-next="1">Activar</button>`}
+        ? `<button class="btn btn--ghost btn--sm btn-admin-toggle" data-id="${esc(r.id)}" data-next="0">Desactivar</button>`
+        : `<button class="btn btn--ghost btn--sm btn-admin-toggle" data-id="${esc(r.id)}" data-next="1">Activar</button>`}
           </div>
         </td>
       </tr>
@@ -958,10 +1384,7 @@
         }
 
         try {
-          await api(`/admin/carpetas/${encodeURIComponent(id)}`, {
-            method: "PATCH",
-            body: JSON.stringify({ ruta_base: nuevaRuta }),
-          });
+          await updateAdminRutaById(id, { ruta_base: nuevaRuta });
           showAlert(`Ruta ${id} actualizada.`, "ok");
           await fetchAdminRutas();
 
@@ -984,10 +1407,7 @@
         const next = Number(btn.dataset.next);
 
         try {
-          await api(`/admin/carpetas/${encodeURIComponent(id)}`, {
-            method: "PATCH",
-            body: JSON.stringify({ activo: next }),
-          });
+          await updateAdminRutaById(id, { activo: next });
           showAlert(`Ruta ${id} ${next === 1 ? "activada" : "desactivada"}.`, "ok");
           await fetchAdminRutas();
 
@@ -1017,10 +1437,7 @@
     }
 
     try {
-      await api(`/admin/reportes/${encodeURIComponent(codigo)}/carpetas`, {
-        method: "POST",
-        body: JSON.stringify({ ruta_base: ruta }),
-      });
+      await createAdminRutaByCodigo(codigo, ruta);
       $("adminRutaNueva").value = "";
       showAlert("Ruta agregada correctamente.", "ok");
       await fetchAdminRutas();
@@ -1044,6 +1461,140 @@
     $("btnAdminCargar")?.addEventListener("click", fetchAdminRutas);
     $("adminReporte")?.addEventListener("change", fetchAdminRutas);
     $("btnAdminAgregar")?.addEventListener("click", addAdminRuta);
+  }
+
+  async function loadConfiguratorRutas() {
+    const report = getConfiguratorSelectedReport();
+    const tb = $("cfgTbodyRutas");
+    const status = $("cfgRutasStatus");
+    if (!tb || !status) return;
+
+    if (!report?.codigo) {
+      status.textContent = "Guarda el reporte para habilitar esta sección.";
+      tb.innerHTML = `<tr><td colspan="4" class="table-empty">Guarda el reporte para administrar rutas.</td></tr>`;
+      state.adminConfigurator.rutas = [];
+      renderConfiguratorReview();
+      syncConfiguratorFlowActions();
+      return;
+    }
+
+    if (Number(report.requiere_input_archivo) !== 1) {
+      status.textContent = "Este reporte no requiere archivo de entrada.";
+      tb.innerHTML = `<tr><td colspan="4" class="table-empty">No aplica porque el reporte no requiere archivo de entrada.</td></tr>`;
+      state.adminConfigurator.rutas = [];
+      renderConfiguratorReview();
+      syncConfiguratorFlowActions();
+      return;
+    }
+
+    tb.innerHTML = `<tr><td colspan="4" class="table-empty">Cargando rutas...</td></tr>`;
+    status.textContent = `Rutas permitidas para ${report.codigo}.`;
+
+    try {
+      const rows = await getAdminRutasByCodigo(report.codigo);
+      state.adminConfigurator.rutas = rows || [];
+      renderConfiguratorRutas(rows || []);
+      renderConfiguratorReview();
+      syncConfiguratorFlowActions();
+    } catch (e) {
+      tb.innerHTML = `<tr><td colspan="4" class="table-empty">Error al cargar rutas.</td></tr>`;
+      state.adminConfigurator.rutas = [];
+      syncConfiguratorFlowActions();
+      showAlert(`No se pudieron cargar rutas del configurador: ${e.message}`, "err");
+    }
+  }
+
+  function renderConfiguratorRutas(rows = []) {
+    const tb = $("cfgTbodyRutas");
+    if (!tb) return;
+
+    if (!rows.length) {
+      tb.innerHTML = `<tr><td colspan="4" class="table-empty">No hay rutas registradas para este reporte.</td></tr>`;
+      syncConfiguratorFlowActions();
+      return;
+    }
+
+    tb.innerHTML = rows.map((r) => `
+      <tr>
+        <td class="mono">${esc(r.id)}</td>
+        <td><input id="cfg_ruta_edit_${esc(r.id)}" class="input-sm" type="text" value="${esc(r.ruta_base)}" /></td>
+        <td>${Number(r.activo) === 1 ? '<span class="status-pill status-OK">ACTIVO</span>' : '<span class="status-pill status-CANCELADO">INACTIVO</span>'}</td>
+        <td>
+          <div class="inline-controls">
+            <button class="btn btn--ghost btn--sm btn-cfg-ruta-save" data-id="${esc(r.id)}">Guardar</button>
+            <button class="btn btn--ghost btn--sm btn-cfg-ruta-toggle" data-id="${esc(r.id)}" data-next="${Number(r.activo) === 1 ? "0" : "1"}">
+              ${Number(r.activo) === 1 ? "Desactivar" : "Activar"}
+            </button>
+          </div>
+        </td>
+      </tr>
+    `).join("");
+
+    document.querySelectorAll(".btn-cfg-ruta-save").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.dataset.id;
+        const nuevaRuta = ($(`cfg_ruta_edit_${id}`)?.value || "").trim();
+        if (!nuevaRuta) {
+          showAlert("La ruta no puede estar vacía.", "err");
+          return;
+        }
+        try {
+          await updateAdminRutaById(id, { ruta_base: nuevaRuta });
+          showAlert(`Ruta ${id} actualizada.`, "ok");
+          await loadConfiguratorRutas();
+        } catch (e) {
+          showAlert(`No se pudo actualizar ruta: ${e.message}`, "err");
+        }
+      });
+    });
+
+    document.querySelectorAll(".btn-cfg-ruta-toggle").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.dataset.id;
+        const next = Number(btn.dataset.next || 0);
+        try {
+          await updateAdminRutaById(id, { activo: next });
+          showAlert(`Ruta ${id} ${next === 1 ? "activada" : "desactivada"}.`, "ok");
+          await loadConfiguratorRutas();
+        } catch (e) {
+          showAlert(`No se pudo cambiar estado de ruta: ${e.message}`, "err");
+        }
+      });
+    });
+
+    syncConfiguratorFlowActions();
+  }
+
+  function activateTab(tabId) {
+    if (!tabId) return;
+    document.querySelector(`.menu__item[data-tab="${tabId}"]`)?.click();
+  }
+
+  async function addConfiguratorRuta() {
+    const report = getConfiguratorSelectedReport();
+    const ruta = $("cfgRutaNueva")?.value?.trim();
+
+    if (!report?.codigo) {
+      showAlert("Primero guarda el reporte.", "err");
+      return;
+    }
+    if (Number(report.requiere_input_archivo) !== 1) {
+      showAlert("Este reporte no requiere rutas de entrada.", "err");
+      return;
+    }
+    if (!ruta) {
+      showAlert("Ingresa una ruta base.", "err");
+      return;
+    }
+
+    try {
+      await createAdminRutaByCodigo(report.codigo, ruta);
+      $("cfgRutaNueva").value = "";
+      showAlert("Ruta agregada correctamente.", "ok");
+      await loadConfiguratorRutas();
+    } catch (e) {
+      showAlert(`No se pudo agregar ruta: ${e.message}`, "err");
+    }
   }
 
   // ---------- Admin Reportes ----------
@@ -1104,6 +1655,92 @@
     if (next) next.disabled = page >= totalPages;
   }
 
+  async function loadConfiguratorEquipos() {
+    const report = getConfiguratorSelectedReport();
+    if (!report?.id) {
+      state.adminReporteEquipoIds = [];
+      renderConfiguratorEquiposChecks();
+      renderConfiguratorReview();
+      return;
+    }
+
+    try {
+      const rows = await getEquiposReporteById(report.id);
+      state.adminReporteEquipoIds = (rows || []).map((r) => Number(r.id));
+      renderConfiguratorEquiposChecks();
+      renderConfiguratorReview();
+    } catch (e) {
+      showAlert(`No se pudieron cargar equipos del reporte: ${e.message}`, "err");
+    }
+  }
+
+  async function saveConfiguratorEquipos() {
+    const btn = $("btnCfgGuardarEquipos");
+    const report = getConfiguratorSelectedReport();
+    if (!report?.id) {
+      showAlert("Primero guarda el reporte.", "err");
+      return;
+    }
+
+    try {
+      if (btn) {
+        btn.disabled = true;
+        btn.dataset.prevText = btn.textContent || "";
+        btn.textContent = "Guardando...";
+      }
+      await updateEquiposReporteById(report.id, state.adminReporteEquipoIds || []);
+      showAlert(`Asignación aplicada para reporte ${report.codigo || report.id}.`, "ok");
+      await loadReportes();
+      await loadConfiguratorEquipos();
+      setConfiguratorStep("revision");
+      renderConfiguratorReview();
+    } catch (e) {
+      showAlert(`No se pudo guardar asignación de reporte: ${e.message}`, "err");
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = btn.dataset.prevText || "Guardar asignación";
+      }
+    }
+  }
+
+  async function hydrateConfiguratorForReport(report, { mode = "edit", step = "datos" } = {}) {
+    state.adminConfigurator.mode = mode;
+    setConfiguratorSelectedReport(report || null);
+    syncAdminReporteIdVisibility();
+    syncConfiguratorInputFields();
+    setConfiguratorStep(step);
+    openAdminReporteModal();
+    renderConfiguratorEquiposChecks();
+    renderConfiguratorReview();
+    syncConfiguratorFlowActions();
+
+    if (canUseAdvancedConfiguratorSteps()) {
+      await Promise.all([
+        loadConfiguratorRutas(),
+        loadConfiguratorEquipos(),
+      ]);
+    } else {
+      await loadConfiguratorRutas();
+      state.adminReporteEquipoIds = [];
+      renderConfiguratorEquiposChecks();
+      renderConfiguratorReview();
+    }
+  }
+
+  async function openReportConfiguratorCreate() {
+    resetAdminReporteModalForCreate();
+    state.adminReporteEquipoIds = [];
+    $("cfgRutaNueva").value = "";
+    await hydrateConfiguratorForReport(null, { mode: "create", step: "datos" });
+  }
+
+  async function openReportConfiguratorEdit(row) {
+    prepareAdminReporteModalForEdit(row);
+    $("cfgRutaNueva").value = "";
+    await hydrateConfiguratorForReport(row, { mode: "edit", step: "datos" });
+  }
+
   function renderAdminReportes(rows = []) {
     const tb = $("tbodyAdminReportes");
     if (!tb) return;
@@ -1118,11 +1755,11 @@
         <td class="mono">${esc(r.codigo)}</td>
         <td>${esc(r.nombre)}</td>
         <td>${r.requiere_input_archivo === 1 ? "SI" : "NO"}</td>
-        <td>${r.activo === 1 ? "ACTIVO" : "INACTIVO"}</td>
+        <td>${Number(r.activo) === 1 ? '<span class="status-pill status-OK">Activo</span>' : '<span class="status-pill status-CANCELADO">Inactivo</span>'}</td>
         <td>
           <div class="inline-controls">
-            <button class="btn btn--ghost btn-admrep-edit" data-id="${esc(r.id)}">Editar</button>
-            <button class="btn btn--ghost btn-admrep-delete" data-id="${esc(r.id)}">Desactivar</button>
+            <button class="btn btn--ghost btn--sm btn-admrep-edit" data-id="${esc(r.id)}">Configurar</button>
+            <button class="btn btn--ghost btn--sm btn-admrep-delete" data-id="${esc(r.id)}">Desactivar</button>
           </div>
         </td>
       </tr>
@@ -1137,18 +1774,7 @@
           return;
         }
 
-        $("admEditRepId").value = row.id;
-        $("admEditRepIdView").value = row.id;
-        $("admEditRepCodigo").value = row.codigo || "";
-        $("admEditRepNombre").value = row.nombre || "";
-        $("admEditRepDescripcion").value = row.descripcion || "";
-        $("admEditRepReqInput").value = String(row.requiere_input_archivo ?? 0);
-        $("admEditRepActivo").value = String(row.activo ?? 0);
-        $("admEditRepRutaOutput").value = row.ruta_output_base || "";
-        $("admEditRepParametrosEjemplo").value = normalizeJsonExampleText(row.parametros_ejemplo_json || "");
-        $("admEditRepTipos").value = row.tipos_permitidos || "";
-        $("admEditRepComando").value = row.comando || "";
-        openAdminReporteModal();
+        await openReportConfiguratorEdit(row);
       });
     });
 
@@ -1167,89 +1793,137 @@
     });
   }
 
-  async function saveAdminReporteFromModal(ev) {
-    ev.preventDefault();
-    const id = $("admEditRepId")?.value?.trim();
-    if (!id) {
-      showAlert("No hay reporte seleccionado para editar.", "err");
-      return;
-    }
+  function setupAccordions(groupName) {
+    const accordions = Array.from(document.querySelectorAll(`[data-accordion-group="${groupName}"]`));
+    if (!accordions.length) return;
 
-    const payload = {
-      codigo: $("admEditRepCodigo")?.value?.trim(),
-      nombre: $("admEditRepNombre")?.value?.trim(),
-      descripcion: $("admEditRepDescripcion")?.value?.trim() || null,
-      requiere_input_archivo: Number($("admEditRepReqInput")?.value || 0),
-      activo: Number($("admEditRepActivo")?.value || 0),
-      ruta_output_base: $("admEditRepRutaOutput")?.value?.trim() || null,
-      parametros_ejemplo_json: $("admEditRepParametrosEjemplo")?.value?.trim() || null,
-      tipos_permitidos: $("admEditRepTipos")?.value?.trim() || null,
-      comando: $("admEditRepComando")?.value?.trim() || null,
+    const openAccordion = (targetAccordion) => {
+      accordions.forEach((accordion) => {
+        const trigger = accordion.querySelector("[data-accordion-trigger]");
+        const body = accordion.querySelector("[data-accordion-body]");
+        const icon = accordion.querySelector(".accordion__icon");
+        const isOpen = accordion === targetAccordion;
+        accordion.classList.toggle("is-open", isOpen);
+        if (trigger) trigger.setAttribute("aria-expanded", isOpen ? "true" : "false");
+        if (body) body.hidden = !isOpen;
+        if (icon) icon.textContent = isOpen ? "-" : "+";
+      });
     };
 
-    if (!payload.codigo || !payload.nombre) {
-      showAlert("Código y nombre son obligatorios.", "err");
-      return;
-    }
-
-    try {
-      await api(`/admin/reportes/${encodeURIComponent(id)}`, {
-        method: "PATCH",
-        body: JSON.stringify(payload),
+    accordions.forEach((accordion) => {
+      const trigger = accordion.querySelector("[data-accordion-trigger]");
+      trigger?.addEventListener("click", () => {
+        if (accordion.classList.contains("is-open")) {
+          openAccordion(null);
+          return;
+        }
+        openAccordion(accordion);
       });
-      closeAdminReporteModal();
-      showAlert(`Reporte ${id} actualizado.`, "ok");
-      await loadReportes();
-      await loadAdminReportes();
-    } catch (e) {
-      showAlert(`No se pudo actualizar reporte: ${e.message}`, "err");
-    }
+    });
   }
 
-  async function createAdminReporte() {
-    const payload = {
-      codigo: $("admRepCodigo")?.value?.trim(),
-      nombre: $("admRepNombre")?.value?.trim(),
-      descripcion: $("admRepDescripcion")?.value?.trim() || null,
-      tipos_permitidos: $("admRepTipos")?.value?.trim() || null,
-      comando: $("admRepComando")?.value?.trim() || null,
-      ruta_output_base: $("admRepRutaOutput")?.value?.trim() || null,
-      parametros_ejemplo_json: $("admRepParametrosEjemplo")?.value?.trim() || null,
-      requiere_input_archivo: Number($("admRepReqInput")?.value || 0),
-      activo: Number($("admRepActivo")?.value || 1),
-    };
-
-    if (!payload.codigo || !payload.nombre) {
-      showAlert("Código y nombre son obligatorios.", "err");
-      return;
-    }
+  async function saveAdminReporteFromModal(ev) {
+    ev.preventDefault();
+    if (!validateAdminReporteForm()) return;
+    const id = $("admEditRepId")?.value?.trim();
+    const payload = getAdminReportePayloadFromForm();
 
     try {
-      await api("/admin/reportes", {
-        method: "POST",
+      const out = await api(id ? `/admin/reportes/${encodeURIComponent(id)}` : "/admin/reportes", {
+        method: id ? "PATCH" : "POST",
         body: JSON.stringify(payload),
       });
-      $("admRepCodigo").value = "";
-      $("admRepNombre").value = "";
-      $("admRepDescripcion").value = "";
-      $("admRepTipos").value = "";
-      $("admRepComando").value = "";
-      $("admRepRutaOutput").value = "";
-      $("admRepParametrosEjemplo").value = "";
-      showAlert("Reporte creado correctamente.", "ok");
+      $("admEditRepId").value = out.id;
+      $("admEditRepIdView").value = out.id;
+      setConfiguratorSelectedReport(out);
+      const nextStep = id
+        ? (
+          state.adminConfigurator.step === "rutas" && Number(payload.requiere_input_archivo) !== 1
+            ? "equipos"
+            : (state.adminConfigurator.step || "datos")
+        )
+        : (Number(payload.requiere_input_archivo) === 1 ? "rutas" : "equipos");
+      await hydrateConfiguratorForReport(out, {
+        mode: id ? "edit" : "create",
+        step: nextStep,
+      });
+      showAlert(id ? `Reporte ${id} actualizado.` : "Reporte creado correctamente.", "ok");
       await loadReportes();
       await loadAdminReportes();
+      await loadAdminEquiposData();
     } catch (e) {
-      showAlert(`No se pudo crear reporte: ${e.message}`, "err");
+      showAlert(`${id ? "No se pudo actualizar reporte" : "No se pudo crear reporte"}: ${e.message}`, "err");
     }
   }
 
   function setupAdminReportes() {
-    $("btnAdmRepCrear")?.addEventListener("click", createAdminReporte);
+    $("btnOpenAdmRepCreateModal")?.addEventListener("click", openReportConfiguratorCreate);
     $("btnAdmRepRefrescar")?.addEventListener("click", loadAdminReportes);
     $("btnCloseAdmRepModal")?.addEventListener("click", closeAdminReporteModal);
     $("btnCloseAdmRepModalBg")?.addEventListener("click", closeAdminReporteModal);
     $("formAdminReporteEdit")?.addEventListener("submit", saveAdminReporteFromModal);
+    $("btnCfgGoToRutas")?.addEventListener("click", async () => {
+      if (!canUseAdvancedConfiguratorSteps()) {
+        showAlert("Primero guarda el reporte para continuar.", "err");
+        return;
+      }
+      if (isConfiguratorInputRequired()) {
+        setConfiguratorStep("rutas");
+        await loadConfiguratorRutas();
+        return;
+      }
+      setConfiguratorStep("equipos");
+      await loadConfiguratorEquipos();
+    });
+    $("btnCfgAgregarRuta")?.addEventListener("click", addConfiguratorRuta);
+    $("btnCfgGoToEquipos")?.addEventListener("click", async () => {
+      setConfiguratorStep("equipos");
+      await loadConfiguratorEquipos();
+    });
+    $("cfgReporteEquiposFiltro")?.addEventListener("input", renderConfiguratorEquiposChecks);
+    $("btnCfgGuardarEquipos")?.addEventListener("click", saveConfiguratorEquipos);
+    $("btnCfgOpenEquiposAdmin")?.addEventListener("click", () => {
+      closeAdminReporteModal();
+      activateTab("tab-admin-equipos");
+    });
+    $("btnCfgFinalizar")?.addEventListener("click", async () => {
+      closeAdminReporteModal();
+      await loadAdminReportes();
+    });
+    document.querySelectorAll("[data-config-step]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const step = btn.dataset.configStep;
+        setConfiguratorStep(step);
+        if (step === "rutas") await loadConfiguratorRutas();
+        if (step === "equipos") await loadConfiguratorEquipos();
+        if (step === "revision") renderConfiguratorReview();
+      });
+    });
+    $("admEditRepReqInput")?.addEventListener("change", () => {
+      const selected = getConfiguratorSelectedReport();
+      syncConfiguratorInputFields();
+      if (selected) {
+        selected.requiere_input_archivo = Number($("admEditRepReqInput")?.value || 0);
+        renderConfiguratorReview();
+        syncConfiguratorFlowActions();
+        if (state.adminConfigurator.step === "rutas") {
+          loadConfiguratorRutas();
+        }
+      } else {
+        syncConfiguratorFlowActions();
+      }
+    });
+    $("admEditRepCodigo")?.addEventListener("input", validateAdminReporteCodigo);
+    $("admEditRepNombre")?.addEventListener("input", () => {
+      const nombreInput = $("admEditRepNombre");
+      if (!nombreInput) return;
+      nombreInput.setCustomValidity((nombreInput.value || "").trim() ? "" : "El nombre es obligatorio.");
+    });
+    $("formAdminReporteEdit")?.addEventListener("input", () => {
+      if (state.adminConfigurator.step === "revision") {
+        renderConfiguratorReview();
+      }
+    });
     $("admRepFiltroCodigo")?.addEventListener("input", () => {
       state.admRepCurrentPage = 1;
       loadAdminReportes();
@@ -1269,82 +1943,246 @@
   }
 
   // ---------- Admin Equipos ----------
-  function renderChecks(containerId, equipos, selectedIds = [], stateKey = null, filterText = "") {
+  function renderSelectableChecks(containerId, options = {}) {
     const wrap = $(containerId);
     if (!wrap) return;
 
+    const {
+      items = [],
+      selectedIds = [],
+      onChange = null,
+      filterText = "",
+      emptyText = "No hay elementos disponibles.",
+      filteredEmptyText = "No hay elementos que coincidan con el filtro.",
+      labelFn = (item) => item?.nombre || "",
+      searchTextFn = (item) => labelFn(item),
+      titleFn = null,
+    } = options;
+
     const selected = new Set((selectedIds || []).map(Number));
     const filter = (filterText || "").trim().toLowerCase();
-    const filteredEquipos = filter
-      ? (equipos || []).filter((e) => (e.nombre || "").toLowerCase().includes(filter))
-      : (equipos || []);
+    const filteredItems = filter
+      ? (items || []).filter((item) => (searchTextFn(item) || "").toLowerCase().includes(filter))
+      : (items || []);
 
-    if (!equipos?.length) {
-      wrap.innerHTML = `<div class="result-empty">No hay equipos disponibles.</div>`;
+    if (!items?.length) {
+      wrap.innerHTML = `<div class="result-empty">${emptyText}</div>`;
       return;
     }
 
-    if (!filteredEquipos.length) {
-      wrap.innerHTML = `<div class="result-empty">No hay equipos que coincidan con el filtro.</div>`;
+    if (!filteredItems.length) {
+      wrap.innerHTML = `<div class="result-empty">${filteredEmptyText}</div>`;
       return;
     }
 
-    wrap.innerHTML = filteredEquipos.map((e) => `
-      <label class="check-item">
-        <input type="checkbox" value="${esc(e.id)}" ${selected.has(Number(e.id)) ? "checked" : ""} />
-        <span>${esc(e.nombre)}</span>
+    wrap.innerHTML = filteredItems.map((item) => {
+      const label = labelFn(item);
+      const title = titleFn ? titleFn(item) : label;
+      return `
+      <label class="check-item" title="${esc(title)}">
+        <input type="checkbox" value="${esc(item.id)}" ${selected.has(Number(item.id)) ? "checked" : ""} />
+        <span title="${esc(title)}">${esc(label)}</span>
       </label>
-    `).join("");
+    `;
+    }).join("");
 
-    if (stateKey) {
-      wrap.querySelectorAll("input[type='checkbox']").forEach((el) => {
-        el.addEventListener("change", () => {
-          const current = new Set((state[stateKey] || []).map(Number));
-          const id = Number(el.value);
-          if (el.checked) current.add(id);
-          else current.delete(id);
-          state[stateKey] = Array.from(current);
-        });
+    if (!onChange) return;
+
+    wrap.querySelectorAll("input[type='checkbox']").forEach((el) => {
+      el.addEventListener("change", () => {
+        const current = new Set((selectedIds || []).map(Number));
+        const id = Number(el.value);
+        if (el.checked) current.add(id);
+        else current.delete(id);
+        onChange(Array.from(current));
       });
+    });
+  }
+
+  function renderChecks(containerId, equipos, selectedIds = [], stateKey = null, filterText = "", afterChange = null) {
+    renderSelectableChecks(containerId, {
+      items: equipos,
+      selectedIds,
+      filterText,
+      emptyText: "No hay equipos disponibles.",
+      filteredEmptyText: "No hay equipos que coincidan con el filtro.",
+      labelFn: (equipo) => equipo?.nombre || "",
+      searchTextFn: (equipo) => equipo?.nombre || "",
+      onChange: stateKey ? (nextIds) => {
+        state[stateKey] = nextIds;
+        afterChange?.();
+      } : null,
+    });
+  }
+
+  function setSelectOptions(selectId, rows, placeholder, mapLabel) {
+    const sel = $(selectId);
+    if (!sel) return;
+
+    const previousValue = sel.value;
+    if (!rows.length) {
+      sel.innerHTML = `<option value="">${placeholder}</option>`;
+      return;
+    }
+
+    sel.innerHTML =
+      `<option value="">${placeholder}</option>` +
+      rows.map((row) => `<option value="${esc(row.id)}">${mapLabel(row)}</option>`).join("");
+
+    if (previousValue && rows.some((row) => String(row.id) === previousValue)) {
+      sel.value = previousValue;
     }
   }
 
   function fillUsuarioEquiposSelect() {
-    const sel = $("admUsuarioEquipo");
-    if (!sel) return;
-
     const rows = state.adminUsuarios || [];
-    if (!rows.length) {
-      sel.innerHTML = `<option value="">No hay usuarios</option>`;
-      return;
-    }
-    sel.innerHTML =
-      `<option value="">Seleccione usuario</option>` +
-      rows.map((u) => `<option value="${esc(u.id)}">${esc(u.username)}</option>`).join("");
+    setSelectOptions("admUsuarioEquipo", rows, rows.length ? "Seleccione usuario" : "No hay usuarios", (u) => esc(u.username));
+    setSelectOptions("admAccessSummaryUsuario", rows, rows.length ? "Seleccione usuario" : "No hay usuarios", (u) => esc(u.username));
   }
 
   function fillReporteEquiposSelect() {
-    const sel = $("admReporteEquipo");
-    if (!sel) return;
-
     const rows = (state.adminReportesAll?.length ? state.adminReportesAll : state.adminReportes) || [];
-    if (!rows.length) {
-      sel.innerHTML = `<option value="">No hay reportes</option>`;
-      return;
-    }
-    sel.innerHTML =
-      `<option value="">Seleccione reporte</option>` +
-      rows.map((r) => `<option value="${esc(r.id)}">${esc(r.codigo)} - ${esc(r.nombre)}</option>`).join("");
+    const labelFn = (r) => `${esc(r.codigo)} - ${esc(r.nombre)}`;
+    setSelectOptions("admReporteEquipo", rows, rows.length ? "Seleccione reporte" : "No hay reportes", labelFn);
+    setSelectOptions("admAccessSummaryReporte", rows, rows.length ? "Seleccione reporte" : "No hay reportes", labelFn);
+  }
+
+  function renderEquipoSelectionInfo(targetId, selectedIds = []) {
+    const el = $(targetId);
+    if (!el) return;
+    const ids = Array.from(new Set((selectedIds || []).map(Number)));
+    const nombres = (state.adminEquipos || [])
+      .filter((equipo) => ids.includes(Number(equipo.id)))
+      .map((equipo) => equipo.nombre);
+    el.textContent = !ids.length
+      ? "0 equipos"
+      : `${ids.length} equipo${ids.length === 1 ? "" : "s"}${nombres.length ? `: ${nombres.join(", ")}` : ""}`;
   }
 
   function renderUsuarioEquiposChecks() {
-    renderChecks(
-      "admUsuarioEquiposChecks",
-      state.adminEquipos,
-      state.adminUsuarioEquipoIds,
-      "adminUsuarioEquipoIds",
-      $("admUsuarioEquiposFiltro")?.value || ""
+    renderSelectableChecks("admUsuarioEquiposChecks", {
+      items: state.adminEquipos || [],
+      selectedIds: state.adminUsuarioEquipoIds,
+      filterText: $("admUsuarioEquiposFiltro")?.value || "",
+      emptyText: "No hay equipos disponibles.",
+      filteredEmptyText: "No hay equipos que coincidan con el filtro.",
+      labelFn: (equipo) => Number(equipo?.activo) === 1
+        ? `${equipo?.nombre || ""}`
+        : `${equipo?.nombre || ""} (inactivo)`,
+      searchTextFn: (equipo) => equipo?.nombre || "",
+      onChange: (nextIds) => {
+        state.adminUsuarioEquipoIds = nextIds;
+        renderEquipoSelectionInfo("admUsuarioEquiposSeleccionInfo", state.adminUsuarioEquipoIds);
+        renderAdminUsuarioEquiposInactiveNotice();
+      },
+    });
+    renderEquipoSelectionInfo("admUsuarioEquiposSeleccionInfo", state.adminUsuarioEquipoIds);
+    renderAdminUsuarioEquiposInactiveNotice();
+  }
+
+  function getAdminUsuarioEquiposSelectedUser() {
+    return state.adminUsuarioEquiposModal.selectedUser || null;
+  }
+
+  function setAdminUsuarioEquiposSelectedUser(user) {
+    state.adminUsuarioEquiposModal.selectedUser = user || null;
+    const currentUser = getAdminUsuarioEquiposSelectedUser();
+    if ($("admUsuarioEquiposIdentity")) {
+      $("admUsuarioEquiposIdentity").textContent = currentUser?.username || "Usuario";
+    }
+    if ($("admUsuarioEquiposContextText")) {
+      $("admUsuarioEquiposContextText").textContent = currentUser?.username
+        ? `Selecciona los equipos que pertenecerán a ${currentUser.username}.`
+        : "Selecciona los equipos que pertenecerán al usuario.";
+    }
+  }
+
+  function renderAdminUsuarioEquiposInactiveNotice() {
+    const banner = $("admUsuarioEquiposInactiveNotice");
+    const text = $("admUsuarioEquiposInactiveText");
+    if (!banner || !text) return;
+
+    const inactiveIds = Array.from(
+      new Set(
+        (state.adminUsuarioEquipoIds || [])
+          .map(Number)
+          .filter((id) => Number((state.adminEquipos || []).find((equipo) => Number(equipo.id) === id)?.activo) !== 1)
+      )
     );
+    if (!inactiveIds.length) {
+      banner.hidden = true;
+      text.textContent = "";
+      return;
+    }
+
+    const nombres = (state.adminEquipos || [])
+      .filter((equipo) => inactiveIds.includes(Number(equipo.id)))
+      .map((equipo) => equipo.nombre);
+    const lista = nombres.length ? nombres.join(", ") : inactiveIds.map((id) => `ID ${id}`).join(", ");
+    text.textContent = `Los equipos inactivos seleccionados (${lista}) quedarán preasignados, pero no concederán acceso hasta ser activados.`;
+    banner.hidden = false;
+  }
+
+  async function openUsuarioEquiposModalForUser(user) {
+    if (!user?.id) {
+      showAlert("No se encontró el usuario seleccionado.", "err");
+      return;
+    }
+
+    try {
+      if (!(state.adminEquipos || []).length) {
+        await refreshEquiposResumen();
+      }
+      setAdminUsuarioEquiposSelectedUser(user);
+      state.adminUsuarioEquipoIds = [];
+      if ($("admUsuarioEquiposFiltro")) $("admUsuarioEquiposFiltro").value = "";
+      renderUsuarioEquiposChecks();
+      openAdminUsuarioEquiposModal();
+      const rows = await getEquiposUsuarioById(user.id);
+      state.adminUsuarioEquipoIds = (rows || []).map((equipo) => Number(equipo.id));
+      renderUsuarioEquiposChecks();
+    } catch (e) {
+      closeAdminUsuarioEquiposModal();
+      showAlert(`No se pudieron cargar equipos del usuario: ${e.message}`, "err");
+    }
+  }
+
+  async function saveUsuarioEquiposAdmin() {
+    const btn = $("btnGuardarUsuarioEquipos");
+    const user = getAdminUsuarioEquiposSelectedUser();
+    if (!user?.id) {
+      showAlert("No se encontró el usuario seleccionado.", "err");
+      return;
+    }
+
+    const ids = Array.from(new Set((state.adminUsuarioEquipoIds || []).map(Number)));
+
+    if (!ids.length) {
+      const confirmed = window.confirm(`El usuario "${user.username}" quedará sin equipos asignados. ¿Deseas continuar?`);
+      if (!confirmed) return;
+    }
+
+    try {
+      if (btn) {
+        btn.disabled = true;
+        btn.dataset.prevText = btn.textContent || "";
+        btn.textContent = "Guardando...";
+      }
+      await updateEquiposUsuarioById(user.id, ids);
+      closeAdminUsuarioEquiposModal();
+      await Promise.all([
+        fetchUsuariosAdmin(),
+        loadAdminEquiposData(),
+      ]);
+      showAlert("Equipos del usuario actualizados correctamente.", "ok");
+    } catch (e) {
+      showAlert(`No se pudo guardar equipos del usuario: ${e.message}`, "err");
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = btn.dataset.prevText || "Guardar equipos";
+      }
+    }
   }
 
   function renderReporteEquiposChecks() {
@@ -1353,203 +2191,616 @@
       state.adminEquipos,
       state.adminReporteEquipoIds,
       "adminReporteEquipoIds",
-      $("admReporteEquiposFiltro")?.value || ""
+      $("admReporteEquiposFiltro")?.value || "",
+      () => renderEquipoSelectionInfo("admReporteEquiposSeleccionInfo", state.adminReporteEquipoIds)
     );
+    renderEquipoSelectionInfo("admReporteEquiposSeleccionInfo", state.adminReporteEquipoIds);
+  }
+
+  function setAccessReferenceContext(sectionPrefix, teamName = "", description = "") {
+    const banner = $(`${sectionPrefix}Context`);
+    const text = $(`${sectionPrefix}ContextText`);
+    if (!banner || !text) return;
+    if (!teamName) {
+      banner.hidden = true;
+      text.textContent = "";
+      return;
+    }
+    text.textContent = description || `${teamName}. Se usa como referencia visual y filtro inicial.`;
+    banner.hidden = false;
+  }
+
+  function getEquipoConfiguratorSelectedEquipo() {
+    return state.adminEquipoConfigurator.selectedEquipo || null;
+  }
+
+  function getEquipoConfiguratorSelectedUsuarioIds() {
+    return Array.from(new Set((state.adminEquipoConfigurator.selectedUsuarioIds || []).map(Number)));
+  }
+
+  function getEquipoConfiguratorSelectedReporteIds() {
+    return Array.from(new Set((state.adminEquipoConfigurator.selectedReporteIds || []).map(Number)));
+  }
+
+  function setEquipoConfiguratorSelectedUsuarioIds(ids = []) {
+    state.adminEquipoConfigurator.selectedUsuarioIds = Array.from(new Set((ids || []).map(Number)));
+    state.adminEquipoConfigurator.resumen = null;
+  }
+
+  function setEquipoConfiguratorSelectedReporteIds(ids = []) {
+    state.adminEquipoConfigurator.selectedReporteIds = Array.from(new Set((ids || []).map(Number)));
+    state.adminEquipoConfigurator.resumen = null;
+  }
+
+  function isEquipoConfiguratorSelectedEquipoActive() {
+    return Number(getEquipoConfiguratorSelectedEquipo()?.activo) === 1;
+  }
+
+  function syncEquipoConfiguratorCatalogs() {
+    state.adminEquipoConfigurator.usuariosDisponibles = state.adminUsuarios || [];
+    state.adminEquipoConfigurator.reportesDisponibles = (state.adminReportesAll?.length ? state.adminReportesAll : state.adminReportes) || [];
+  }
+
+  function renderEntitySelectionInfo(targetId, selectedIds, totalLabel, singularLabel, pluralLabel) {
+    const el = $(targetId);
+    if (!el) return;
+    const count = Array.from(new Set((selectedIds || []).map(Number))).length;
+    if (!count) {
+      el.textContent = `0 ${totalLabel}`;
+      return;
+    }
+    el.textContent = `${count} ${count === 1 ? singularLabel : pluralLabel}`;
+  }
+
+  function usuarioEquipoChecklistLabel(usuario) {
+    return Number(usuario?.activo) === 1
+      ? `${usuario?.username || ""}`
+      : `${usuario?.username || ""} (inactivo)`;
+  }
+
+  function reporteEquipoChecklistLabel(reporte) {
+    const base = `${reporte?.codigo || ""} - ${reporte?.nombre || ""}`.trim();
+    return Number(reporte?.activo) === 1 ? base : `${base} (inactivo)`;
+  }
+
+  function renderEquipoUsuariosChecks() {
+    renderSelectableChecks("admEquipoUsuariosChecks", {
+      items: state.adminEquipoConfigurator.usuariosDisponibles || [],
+      selectedIds: getEquipoConfiguratorSelectedUsuarioIds(),
+      filterText: $("admEquipoUsuariosFiltro")?.value || "",
+      emptyText: "No hay usuarios disponibles.",
+      filteredEmptyText: "No hay usuarios que coincidan con el filtro.",
+      labelFn: usuarioEquipoChecklistLabel,
+      searchTextFn: (usuario) => `${usuario?.username || ""} ${(usuario?.roles || []).join(" ")}`,
+      onChange: (nextIds) => {
+        setEquipoConfiguratorSelectedUsuarioIds(nextIds);
+        renderEquipoUsuariosChecks();
+        renderEquipoResumen();
+      },
+    });
+    renderEntitySelectionInfo("admEquipoUsuariosSeleccionInfo", getEquipoConfiguratorSelectedUsuarioIds(), "usuarios", "usuario", "usuarios");
+  }
+
+  function renderEquipoReportesChecks() {
+    renderSelectableChecks("admEquipoReportesChecks", {
+      items: state.adminEquipoConfigurator.reportesDisponibles || [],
+      selectedIds: getEquipoConfiguratorSelectedReporteIds(),
+      filterText: $("admEquipoReportesFiltro")?.value || "",
+      emptyText: "No hay reportes disponibles.",
+      filteredEmptyText: "No hay reportes que coincidan con el filtro.",
+      labelFn: reporteEquipoChecklistLabel,
+      searchTextFn: (reporte) => `${reporte?.codigo || ""} ${reporte?.nombre || ""}`,
+      onChange: (nextIds) => {
+        setEquipoConfiguratorSelectedReporteIds(nextIds);
+        renderEquipoReportesChecks();
+        renderEquipoResumen();
+      },
+    });
+    renderEntitySelectionInfo("admEquipoReportesSeleccionInfo", getEquipoConfiguratorSelectedReporteIds(), "reportes", "reporte", "reportes");
+  }
+
+  function renderEquipoInactiveNotices() {
+    const isActive = isEquipoConfiguratorSelectedEquipoActive();
+    [
+      $("admEquipoUsuariosInactiveNotice"),
+      $("admEquipoReportesInactiveNotice"),
+      $("admEquipoResumenInactiveNotice"),
+    ].forEach((el) => {
+      if (!el) return;
+      el.hidden = isActive || !getEquipoConfiguratorSelectedEquipo()?.id;
+    });
+  }
+
+  function setEquipoConfiguratorSelectedEquipo(equipo) {
+    state.adminEquipoConfigurator.selectedEquipo = equipo || null;
+    const selected = getEquipoConfiguratorSelectedEquipo();
+    const identity = $("cfgEquipoIdentity");
+    const context = $("cfgEquipoContextText");
+    const equipoNombre = selected?.nombre || "equipo nuevo";
+    const usuariosHeading = $("cfgEquipoUsuariosHeading");
+    const reportesHeading = $("cfgEquipoReportesHeading");
+
+    if (identity) {
+      identity.textContent = selected?.id
+        ? `ID ${selected.id}`
+        : "Equipo nuevo";
+    }
+
+    if (context) {
+      context.textContent = selected?.id
+        ? `Configurando ${equipoNombre}. Define primero sus usuarios y luego sus reportes.`
+        : "Guarda primero el equipo para habilitar sus relaciones de acceso.";
+    }
+
+    if (usuariosHeading) {
+      usuariosHeading.textContent = selected?.nombre
+        ? `Usuarios del equipo: ${selected.nombre}`
+        : "Usuarios del equipo";
+    }
+
+    if (reportesHeading) {
+      reportesHeading.textContent = selected?.nombre
+        ? `Reportes del equipo: ${selected.nombre}`
+        : "Reportes del equipo";
+    }
+
+    renderEquipoInactiveNotices();
+  }
+
+  function canUseEquipoConfiguratorAdvancedSteps() {
+    return !!getEquipoConfiguratorSelectedEquipo()?.id;
+  }
+
+  function getEquipoConfiguratorStepAvailability() {
+    const hasEquipo = canUseEquipoConfiguratorAdvancedSteps();
+    return {
+      datos: true,
+      usuarios: hasEquipo,
+      reportes: hasEquipo,
+      resumen: hasEquipo,
+    };
+  }
+
+  function setEquipoConfiguratorStep(stepName) {
+    const availability = getEquipoConfiguratorStepAvailability();
+    const targetStep = availability[stepName] ? stepName : "datos";
+    state.adminEquipoConfigurator.currentStep = targetStep;
+
+    document.querySelectorAll("[data-equipo-config-step]").forEach((btn) => {
+      const step = btn.dataset.equipoConfigStep;
+      const enabled = !!availability[step];
+      btn.classList.toggle("is-active", step === targetStep);
+      btn.classList.toggle("is-disabled", !enabled);
+      btn.disabled = !enabled;
+    });
+
+    document.querySelectorAll("[data-equipo-config-panel]").forEach((panel) => {
+      panel.classList.toggle("is-active", panel.dataset.equipoConfigPanel === targetStep);
+    });
+  }
+
+  function renderEquipoResumen() {
+    const wrap = $("admEquipoResumenResult");
+    if (!wrap) return;
+
+    const equipo = getEquipoConfiguratorSelectedEquipo();
+    if (!equipo?.id) {
+      wrap.innerHTML = `<div class="result-empty">Guarda el equipo y configura usuarios y reportes para ver el resumen.</div>`;
+      return;
+    }
+
+    const usuariosCount = getEquipoConfiguratorSelectedUsuarioIds().length;
+    const reportesCount = getEquipoConfiguratorSelectedReporteIds().length;
+    const estadoTexto = Number(equipo.activo) === 1 ? "Activo" : "Inactivo";
+    const impacto = isEquipoConfiguratorSelectedEquipoActive()
+      ? "Los usuarios de este equipo podrán acceder a los reportes asignados, siempre que los reportes estén activos."
+      : "Este equipo tiene usuarios y reportes configurados, pero no concederá acceso mientras esté inactivo.";
+
+    const advertencias = [];
+    if (!usuariosCount) {
+      advertencias.push("Este equipo no tiene usuarios asignados.");
+    }
+    if (!reportesCount) {
+      advertencias.push("Este equipo no tiene reportes asignados.");
+    }
+
+    wrap.innerHTML = `
+      <div class="access-summary-grid">
+        <div class="access-summary-card">
+          <span class="access-summary-card__label">Equipo</span>
+          <strong>${esc(equipo.nombre || `ID ${equipo.id}`)}</strong>
+          <p>ID ${esc(equipo.id)} · ${esc(estadoTexto)}</p>
+        </div>
+        <div class="access-summary-card">
+          <span class="access-summary-card__label">Usuarios asignados</span>
+          <strong>${usuariosCount}</strong>
+          <p>${usuariosCount ? "Relaciones usuario-equipo activas en el configurador." : "Sin usuarios asignados."}</p>
+        </div>
+        <div class="access-summary-card">
+          <span class="access-summary-card__label">Reportes asignados</span>
+          <strong>${reportesCount}</strong>
+          <p>${reportesCount ? "Relaciones reporte-equipo activas en el configurador." : "Sin reportes asignados."}</p>
+        </div>
+      </div>
+      <div class="access-summary-note">${esc(impacto)}</div>
+      ${advertencias.length
+        ? `<div class="access-summary-note">${advertencias.map((msg) => `<div>${esc(msg)}</div>`).join("")}</div>`
+        : ""}
+    `;
+  }
+
+  function resetEquipoConfiguratorWorkspace() {
+    setEquipoConfiguratorSelectedUsuarioIds([]);
+    setEquipoConfiguratorSelectedReporteIds([]);
+    state.adminEquipoConfigurator.resumen = null;
+    if ($("admEquipoUsuariosFiltro")) $("admEquipoUsuariosFiltro").value = "";
+    if ($("admEquipoReportesFiltro")) $("admEquipoReportesFiltro").value = "";
+    renderEquipoInactiveNotices();
+    renderEquipoUsuariosChecks();
+    renderEquipoReportesChecks();
+    renderEquipoResumen();
+  }
+
+  function resetAdminEquipoModalForCreate() {
+    $("adminEquipoModalTitle").textContent = "Nuevo equipo";
+    $("btnSubmitAdminEquipoModal").textContent = "Crear equipo";
+    $("admCfgEquipoId").value = "";
+    $("admCfgEquipoIdView").value = "";
+    $("admCfgEquipoNombre").value = "";
+    $("admCfgEquipoActivo").value = "1";
+    $("admCfgEquipoIdField").hidden = true;
+    resetEquipoConfiguratorWorkspace();
+  }
+
+  function prepareAdminEquipoModalForEdit(row) {
+    $("adminEquipoModalTitle").textContent = "Configurar equipo";
+    $("btnSubmitAdminEquipoModal").textContent = "Guardar cambios";
+    $("admCfgEquipoIdField").hidden = false;
+    $("admCfgEquipoId").value = row.id;
+    $("admCfgEquipoIdView").value = row.id;
+    $("admCfgEquipoNombre").value = row.nombre || "";
+    $("admCfgEquipoActivo").value = String(row.activo ?? 1);
+    resetEquipoConfiguratorWorkspace();
+  }
+
+  async function loadEquipoUsuarios() {
+    const equipo = getEquipoConfiguratorSelectedEquipo();
+    if (!equipo?.id) {
+      setEquipoConfiguratorSelectedUsuarioIds([]);
+      renderEquipoUsuariosChecks();
+      renderEquipoResumen();
+      return;
+    }
+    try {
+      const rows = await getUsuariosEquipoById(equipo.id);
+      setEquipoConfiguratorSelectedUsuarioIds((rows || []).map((row) => Number(row.id)));
+      renderEquipoUsuariosChecks();
+      renderEquipoResumen();
+    } catch (e) {
+      showAlert(`No se pudieron cargar usuarios del equipo: ${e.message}`, "err");
+    }
+  }
+
+  async function loadEquipoReportes() {
+    const equipo = getEquipoConfiguratorSelectedEquipo();
+    if (!equipo?.id) {
+      setEquipoConfiguratorSelectedReporteIds([]);
+      renderEquipoReportesChecks();
+      renderEquipoResumen();
+      return;
+    }
+    try {
+      const rows = await getReportesEquipoById(equipo.id);
+      setEquipoConfiguratorSelectedReporteIds((rows || []).map((row) => Number(row.id)));
+      renderEquipoReportesChecks();
+      renderEquipoResumen();
+    } catch (e) {
+      showAlert(`No se pudieron cargar reportes del equipo: ${e.message}`, "err");
+    }
+  }
+
+  async function refreshEquipoConfiguratorResumen() {
+    const equipo = getEquipoConfiguratorSelectedEquipo();
+    if (!equipo?.id) {
+      state.adminEquipoConfigurator.resumen = null;
+      renderEquipoResumen();
+      return;
+    }
+    try {
+      state.adminEquipoConfigurator.resumen = await getEquipoResumenById(equipo.id);
+      renderEquipoResumen();
+    } catch (e) {
+      showAlert(`No se pudo cargar resumen del equipo: ${e.message}`, "err");
+    }
+  }
+
+  async function hydrateConfiguratorForEquipo(equipo, { mode = "edit", step = "datos" } = {}) {
+    state.adminEquipoConfigurator.mode = mode;
+    syncEquipoConfiguratorCatalogs();
+    setEquipoConfiguratorSelectedEquipo(equipo || null);
+    setEquipoConfiguratorStep(step);
+    openAdminEquipoModal();
+    renderEquipoInactiveNotices();
+    renderEquipoUsuariosChecks();
+    renderEquipoReportesChecks();
+    renderEquipoResumen();
+
+    if (equipo?.id) {
+      await Promise.all([
+        loadEquipoUsuarios(),
+        loadEquipoReportes(),
+        refreshEquipoConfiguratorResumen(),
+      ]);
+    }
+  }
+
+  async function openEquipoConfiguratorCreate() {
+    resetAdminEquipoModalForCreate();
+    await hydrateConfiguratorForEquipo(null, { mode: "create", step: "datos" });
+  }
+
+  async function openEquipoConfiguratorEdit(row, step = "datos") {
+    prepareAdminEquipoModalForEdit(row);
+    await hydrateConfiguratorForEquipo(row, { mode: "edit", step });
   }
 
   function renderEquiposTable(rows) {
     const tb = $("tbodyEquipos");
     if (!tb) return;
     if (!rows?.length) {
-      tb.innerHTML = `<tr><td colspan="4" class="table-empty">No hay equipos.</td></tr>`;
+      tb.innerHTML = `<tr><td colspan="6" class="table-empty">No hay equipos.</td></tr>`;
       return;
     }
 
     tb.innerHTML = rows.map((e) => `
-      <tr>
+      <tr data-equipo-row-id="${esc(e.id)}">
         <td class="mono">${esc(e.id)}</td>
-        <td><input id="equipo_nombre_${esc(e.id)}" value="${esc(e.nombre)}" /></td>
+        <td>${esc(e.nombre)}</td>
+        <td>${Number(e.activo) === 1 ? '<span class="status-pill status-OK">Activo</span>' : '<span class="status-pill status-CANCELADO">Inactivo</span>'}</td>
+        <td class="mono">${esc(e.usuarios_count ?? 0)}</td>
+        <td class="mono">${esc(e.reportes_count ?? 0)}</td>
         <td>
-          <select id="equipo_activo_${esc(e.id)}">
-            <option value="1" ${Number(e.activo) === 1 ? "selected" : ""}>ACTIVO</option>
-            <option value="0" ${Number(e.activo) === 0 ? "selected" : ""}>INACTIVO</option>
-          </select>
-        </td>
-        <td>
-          <button class="btn btn--ghost btn-equipo-save" data-id="${esc(e.id)}">Guardar</button>
+          <div class="inline-controls inline-controls--wrap">
+            <button class="btn btn--ghost btn--sm btn-equipo-config" data-id="${esc(e.id)}">Configurar</button>
+          </div>
         </td>
       </tr>
     `).join("");
 
-    document.querySelectorAll(".btn-equipo-save").forEach((btn) => {
+    document.querySelectorAll(".btn-equipo-config").forEach((btn) => {
       btn.addEventListener("click", async () => {
-        const id = btn.dataset.id;
-        try {
-          await api(`/admin/equipos/${encodeURIComponent(id)}`, {
-            method: "PATCH",
-            body: JSON.stringify({
-              nombre: $(`equipo_nombre_${id}`)?.value?.trim(),
-              activo: Number($(`equipo_activo_${id}`)?.value || 1),
-            }),
-          });
-          showAlert(`Equipo ${id} actualizado.`, "ok");
-          await loadAdminEquiposData();
-        } catch (e) {
-          showAlert(`No se pudo actualizar equipo: ${e.message}`, "err");
+        const id = Number(btn.dataset.id);
+        const row = (state.adminEquipos || []).find((x) => Number(x.id) === id);
+        if (!row) {
+          showAlert("No se encontró el equipo seleccionado.", "err");
+          return;
         }
+        await openEquipoConfiguratorEdit(row);
       });
     });
   }
 
+  function updateAdminEquiposPaginationControls(page, totalPages, totalItems) {
+    const info = $("admEquipoPageInfo");
+    const prev = $("admEquipoPrevPage");
+    const next = $("admEquipoNextPage");
+    if (info) info.textContent = `Página ${page} de ${totalPages} (${totalItems} registros)`;
+    if (prev) prev.disabled = page <= 1;
+    if (next) next.disabled = page >= totalPages;
+  }
+
+  async function refreshEquiposResumen() {
+    state.adminEquipos = await getEquiposResumen();
+  }
+
   async function loadAdminEquiposData() {
-    const isAdmin = state.me?.roles?.includes("ADMIN") || state.me?.username === "admin";
+    const isAdmin = isAdminUser();
     if (!isAdmin) return;
 
     try {
-      const [equipos, usuarios, reportes] = await Promise.all([
-        api("/admin/equipos"),
+      const [equiposResumen, usuarios, reportes] = await Promise.all([
+        getEquiposResumen(),
         api("/admin/usuarios"),
         api("/admin/reportes?page=1&page_size=500"),
       ]);
-      state.adminEquipos = equipos || [];
+      state.adminEquipos = equiposResumen || [];
       state.adminUsuarios = usuarios || [];
       state.adminReportesAll = reportes?.items || [];
+      syncEquipoConfiguratorCatalogs();
 
-      renderEquiposTable(state.adminEquipos);
-      fillUsuarioEquiposSelect();
-      fillReporteEquiposSelect();
-      renderUsuarioEquiposChecks();
-      renderReporteEquiposChecks();
+      const pageSize = Number($("admEquipoPageSize")?.value || state.admEquipoPageSize || 10);
+      const totalItems = state.adminEquipos.length;
+      const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+      state.admEquipoPageSize = pageSize;
+      state.admEquipoCurrentPage = Math.min(Math.max(1, state.admEquipoCurrentPage || 1), totalPages);
+      if ($("admEquipoPageSize")) $("admEquipoPageSize").value = String(state.admEquipoPageSize);
+
+      const start = (state.admEquipoCurrentPage - 1) * state.admEquipoPageSize;
+      const end = start + state.admEquipoPageSize;
+      renderEquiposTable(state.adminEquipos.slice(start, end));
+      updateAdminEquiposPaginationControls(state.admEquipoCurrentPage, totalPages, totalItems);
+      renderEquipoUsuariosChecks();
+      renderEquipoReportesChecks();
+      renderEquipoResumen();
+      renderConfiguratorEquiposChecks();
       renderAdmCtEquiposChecks();
     } catch (e) {
       showAlert(`No se pudo cargar administración de equipos: ${e.message}`, "err");
     }
   }
 
-  async function createEquipoAdmin() {
-    const nombre = $("admEquipoNombre")?.value?.trim();
-    const activo = Number($("admEquipoActivo")?.value || 1);
-    if (!nombre) {
+  function getAdminEquipoPayloadFromForm() {
+    return {
+      nombre: $("admCfgEquipoNombre")?.value?.trim(),
+      activo: Number($("admCfgEquipoActivo")?.value || 1),
+    };
+  }
+
+  async function saveAdminEquipoFromModal(ev) {
+    ev.preventDefault();
+    const id = $("admCfgEquipoId")?.value?.trim();
+    const payload = getAdminEquipoPayloadFromForm();
+    const currentStep = state.adminEquipoConfigurator.currentStep || "datos";
+
+    if (!payload.nombre) {
       showAlert("Ingresa el nombre del equipo.", "err");
       return;
     }
+
     try {
-      await api("/admin/equipos", {
-        method: "POST",
-        body: JSON.stringify({ nombre, activo }),
+      const out = await api(id ? `/admin/equipos/${encodeURIComponent(id)}` : "/admin/equipos", {
+        method: id ? "PATCH" : "POST",
+        body: JSON.stringify(payload),
       });
-      $("admEquipoNombre").value = "";
-      $("admEquipoActivo").value = "1";
-      showAlert("Equipo creado correctamente.", "ok");
+      $("admCfgEquipoId").value = out.id;
+      $("admCfgEquipoIdView").value = out.id;
+      $("admCfgEquipoIdField").hidden = false;
+      await refreshEquiposResumen();
+      setEquipoConfiguratorSelectedEquipo(out);
+      await hydrateConfiguratorForEquipo(out, {
+        mode: id ? "edit" : "create",
+        step: id ? currentStep : "usuarios",
+      });
+      showAlert(id ? `Equipo ${id} actualizado.` : "Equipo creado correctamente.", "ok");
       await loadAdminEquiposData();
     } catch (e) {
-      showAlert(`No se pudo crear equipo: ${e.message}`, "err");
+      showAlert(`${id ? "No se pudo actualizar equipo" : "No se pudo crear equipo"}: ${e.message}`, "err");
     }
   }
 
-  async function loadEquiposUsuarioSeleccionado() {
-    const usuarioId = $("admUsuarioEquipo")?.value?.trim();
-    if (!usuarioId) {
-      state.adminUsuarioEquipoIds = [];
-      renderUsuarioEquiposChecks();
+  async function saveEquipoUsuarios() {
+    const btn = $("btnGuardarEquipoUsuarios");
+    const equipo = getEquipoConfiguratorSelectedEquipo();
+    if (!equipo?.id) {
+      showAlert("Primero guarda el equipo para continuar.", "err");
       return;
     }
-    try {
-      const rows = await api(`/admin/usuarios/${encodeURIComponent(usuarioId)}/equipos`);
-      state.adminUsuarioEquipoIds = (rows || []).map((r) => Number(r.id));
-      renderUsuarioEquiposChecks();
-    } catch (e) {
-      showAlert(`No se pudieron cargar equipos del usuario: ${e.message}`, "err");
-    }
-  }
 
-  async function saveEquiposUsuario() {
-    const btn = $("btnAdmUsuarioEquiposGuardar");
-    const usuarioId = $("admUsuarioEquipo")?.value?.trim();
-    if (!usuarioId) {
-      showAlert("Selecciona un usuario.", "err");
-      return;
+    const ids = getEquipoConfiguratorSelectedUsuarioIds();
+    if (!ids.length) {
+      const confirmed = window.confirm("Este equipo quedará sin usuarios asignados. Ningún usuario heredará acceso a reportes mediante este equipo.");
+      if (!confirmed) return;
     }
-    const usuarioNombre = $("admUsuarioEquipo")?.selectedOptions?.[0]?.textContent?.trim() || `ID ${usuarioId}`;
-    const ids = (state.adminUsuarioEquipoIds || []).map(Number);
+
     try {
       if (btn) {
         btn.disabled = true;
         btn.dataset.prevText = btn.textContent || "";
         btn.textContent = "Guardando...";
       }
-      await api(`/admin/usuarios/${encodeURIComponent(usuarioId)}/equipos`, {
-        method: "PUT",
-        body: JSON.stringify({ equipo_ids: ids }),
-      });
-      showAlert(`Asignación aplicada para usuario ${usuarioNombre} (${ids.length} equipos).`, "ok");
-      await loadReportes();
+      await updateUsuariosEquipoById(equipo.id, ids);
+      await refreshEquiposResumen();
+      await refreshEquipoConfiguratorResumen();
+      showAlert("Usuarios del equipo actualizados correctamente.", "ok");
+      await loadAdminEquiposData();
     } catch (e) {
-      showAlert(`No se pudo guardar asignación de usuario: ${e.message}`, "err");
+      showAlert(`No se pudo guardar usuarios del equipo: ${e.message}`, "err");
     } finally {
       if (btn) {
         btn.disabled = false;
-        btn.textContent = btn.dataset.prevText || "Guardar asignación";
+        btn.textContent = btn.dataset.prevText || "Guardar usuarios del equipo";
       }
     }
   }
 
-  async function loadEquiposReporteSeleccionado() {
-    const reporteId = $("admReporteEquipo")?.value?.trim();
-    if (!reporteId) {
-      state.adminReporteEquipoIds = [];
-      renderReporteEquiposChecks();
+  async function saveEquipoReportes() {
+    const btn = $("btnGuardarEquipoReportes");
+    const equipo = getEquipoConfiguratorSelectedEquipo();
+    if (!equipo?.id) {
+      showAlert("Primero guarda el equipo para continuar.", "err");
       return;
     }
-    try {
-      const rows = await api(`/admin/reportes/${encodeURIComponent(reporteId)}/equipos`);
-      state.adminReporteEquipoIds = (rows || []).map((r) => Number(r.id));
-      renderReporteEquiposChecks();
-    } catch (e) {
-      showAlert(`No se pudieron cargar equipos del reporte: ${e.message}`, "err");
-    }
-  }
 
-  async function saveEquiposReporte() {
-    const btn = $("btnAdmReporteEquiposGuardar");
-    const reporteId = $("admReporteEquipo")?.value?.trim();
-    if (!reporteId) {
-      showAlert("Selecciona un reporte.", "err");
-      return;
+    const ids = getEquipoConfiguratorSelectedReporteIds();
+    if (!ids.length) {
+      const confirmed = window.confirm("Este equipo quedará sin reportes asignados. Los usuarios de este equipo no recibirán acceso a reportes mediante este equipo.");
+      if (!confirmed) return;
     }
-    const reporteNombre = $("admReporteEquipo")?.selectedOptions?.[0]?.textContent?.trim() || `ID ${reporteId}`;
-    const ids = (state.adminReporteEquipoIds || []).map(Number);
+
     try {
       if (btn) {
         btn.disabled = true;
         btn.dataset.prevText = btn.textContent || "";
         btn.textContent = "Guardando...";
       }
-      await api(`/admin/reportes/${encodeURIComponent(reporteId)}/equipos`, {
-        method: "PUT",
-        body: JSON.stringify({ equipo_ids: ids }),
-      });
-      showAlert(`Asignación aplicada para reporte ${reporteNombre} (${ids.length} equipos).`, "ok");
-      await loadReportes();
+      await updateReportesEquipoById(equipo.id, ids);
+      await refreshEquiposResumen();
+      await refreshEquipoConfiguratorResumen();
+      showAlert("Reportes del equipo actualizados correctamente.", "ok");
+      await loadAdminEquiposData();
     } catch (e) {
-      showAlert(`No se pudo guardar asignación de reporte: ${e.message}`, "err");
+      showAlert(`No se pudo guardar reportes del equipo: ${e.message}`, "err");
     } finally {
       if (btn) {
         btn.disabled = false;
-        btn.textContent = btn.dataset.prevText || "Guardar asignación";
+        btn.textContent = btn.dataset.prevText || "Guardar reportes del equipo";
       }
     }
   }
 
   function setupAdminEquipos() {
-    $("btnAdmEquipoCrear")?.addEventListener("click", createEquipoAdmin);
+    $("btnOpenAdmEquipoCreateModal")?.addEventListener("click", openEquipoConfiguratorCreate);
     $("btnAdmEquipoRefrescar")?.addEventListener("click", loadAdminEquiposData);
-    $("admUsuarioEquipo")?.addEventListener("change", loadEquiposUsuarioSeleccionado);
-    $("admUsuarioEquiposFiltro")?.addEventListener("input", renderUsuarioEquiposChecks);
-    $("btnAdmUsuarioEquiposGuardar")?.addEventListener("click", saveEquiposUsuario);
-    $("admReporteEquipo")?.addEventListener("change", loadEquiposReporteSeleccionado);
-    $("admReporteEquiposFiltro")?.addEventListener("input", renderReporteEquiposChecks);
-    $("btnAdmReporteEquiposGuardar")?.addEventListener("click", saveEquiposReporte);
+    $("btnCloseAdmEquipoModal")?.addEventListener("click", closeAdminEquipoModal);
+    $("btnCloseAdmEquipoModalBg")?.addEventListener("click", closeAdminEquipoModal);
+    $("formAdminEquipoEdit")?.addEventListener("submit", saveAdminEquipoFromModal);
+    $("btnCfgEquipoGoToUsuarios")?.addEventListener("click", () => {
+      if (!canUseEquipoConfiguratorAdvancedSteps()) {
+        showAlert("Primero guarda el equipo para continuar.", "err");
+        return;
+      }
+      setEquipoConfiguratorStep("usuarios");
+      renderEquipoUsuariosChecks();
+    });
+    $("btnCfgEquipoBackToDatos")?.addEventListener("click", () => setEquipoConfiguratorStep("datos"));
+    $("btnCfgEquipoGoToReportes")?.addEventListener("click", () => {
+      if (!canUseEquipoConfiguratorAdvancedSteps()) {
+        showAlert("Primero guarda el equipo para continuar.", "err");
+        return;
+      }
+      setEquipoConfiguratorStep("reportes");
+      renderEquipoReportesChecks();
+    });
+    $("btnCfgEquipoBackToUsuarios")?.addEventListener("click", () => setEquipoConfiguratorStep("usuarios"));
+    $("btnCfgEquipoGoToResumen")?.addEventListener("click", () => {
+      if (!canUseEquipoConfiguratorAdvancedSteps()) {
+        showAlert("Primero guarda el equipo para continuar.", "err");
+        return;
+      }
+      setEquipoConfiguratorStep("resumen");
+      renderEquipoResumen();
+    });
+    $("btnCfgEquipoBackToReportes")?.addEventListener("click", () => setEquipoConfiguratorStep("reportes"));
+    $("btnCfgEquipoFinalizar")?.addEventListener("click", async () => {
+      closeAdminEquipoModal();
+      await loadAdminEquiposData();
+    });
+    document.querySelectorAll("[data-equipo-config-step]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const step = btn.dataset.equipoConfigStep;
+        if (!getEquipoConfiguratorStepAvailability()[step]) return;
+        setEquipoConfiguratorStep(step);
+        if (step === "usuarios") renderEquipoUsuariosChecks();
+        if (step === "reportes") renderEquipoReportesChecks();
+        if (step === "resumen") renderEquipoResumen();
+      });
+    });
+    $("admEquipoPageSize")?.addEventListener("change", () => {
+      state.admEquipoCurrentPage = 1;
+      loadAdminEquiposData();
+    });
+    $("admEquipoPrevPage")?.addEventListener("click", () => {
+      state.admEquipoCurrentPage = Math.max(1, state.admEquipoCurrentPage - 1);
+      loadAdminEquiposData();
+    });
+    $("admEquipoNextPage")?.addEventListener("click", () => {
+      state.admEquipoCurrentPage = state.admEquipoCurrentPage + 1;
+      loadAdminEquiposData();
+    });
+    $("admEquipoUsuariosFiltro")?.addEventListener("input", renderEquipoUsuariosChecks);
+    $("admEquipoReportesFiltro")?.addEventListener("input", renderEquipoReportesChecks);
+    $("btnGuardarEquipoUsuarios")?.addEventListener("click", saveEquipoUsuarios);
+    $("btnGuardarEquipoReportes")?.addEventListener("click", saveEquipoReportes);
   }
 
   // ---------- Consulta de Tablas ----------
@@ -1785,19 +3036,205 @@
   }
 
   // ---------- Admin Tablas Consulta ----------
-  function fillAdmCtTablaEquipoSelect() {
-    const sel = $("admCtTablaEquipo");
-    if (!sel) return;
+  function getAdminTablaConsultaSelected() {
+    return state.adminTablaConsultaConfigurator.selectedTabla || null;
+  }
 
-    const rows = state.adminTablasConsulta || [];
-    if (!rows.length) {
-      sel.innerHTML = `<option value="">No hay tablas</option>`;
+  function setAdminTablaConsultaSelected(tabla) {
+    state.adminTablaConsultaConfigurator.selectedTabla = tabla || null;
+    const selected = getAdminTablaConsultaSelected();
+    const identity = $("cfgTablaIdentity");
+    const context = $("cfgTablaContextText");
+
+    if (identity) {
+      identity.textContent = selected?.id
+        ? `ID ${selected.id}`
+        : "Tabla nueva";
+    }
+
+    if (context) {
+      context.textContent = selected?.id
+        ? `Configurando ${selected.codigo || `tabla ${selected.id}`} · ${selected.nombre || "sin nombre descriptivo"}.`
+        : "Completa los datos base para iniciar la configuración.";
+    }
+  }
+
+  function setAdminTablaConsultaIdFieldVisibility(isVisible) {
+    const field = $("admEditCtIdField");
+    if (!field) return;
+    field.hidden = !isVisible;
+    field.style.display = isVisible ? "" : "none";
+    field.setAttribute("aria-hidden", isVisible ? "false" : "true");
+  }
+
+  function syncAdminTablaConsultaIdVisibility() {
+    setAdminTablaConsultaIdFieldVisibility(!!(state.adminTablaConsultaConfigurator.mode === "edit" && getAdminTablaConsultaSelected()?.id));
+  }
+
+  function resetAdminTablaConsultaModalForCreate() {
+    $("adminTablaConsultaModalTitle").textContent = "Nueva tabla consultable";
+    $("btnSubmitAdminTablaConsultaModal").textContent = "Crear tabla";
+    $("btnSubmitAdminTablaConsultaConsulta").textContent = "Crear tabla";
+    $("admEditCtId").value = "";
+    $("admEditCtIdView").value = "";
+    $("admEditCtCodigo").value = "";
+    $("admEditCtNombre").value = "";
+    $("admEditCtTablaBd").value = "";
+    $("admEditCtDescripcion").value = "";
+    $("admEditCtColsPermitidas").value = "";
+    $("admEditCtColsResultado").value = "";
+    $("admEditCtActivo").value = "1";
+    $("admCtEquiposFiltro").value = "";
+    setAdminTablaConsultaIdFieldVisibility(false);
+  }
+
+  function prepareAdminTablaConsultaModalForEdit(row) {
+    $("adminTablaConsultaModalTitle").textContent = "Editar tabla consultable";
+    $("btnSubmitAdminTablaConsultaModal").textContent = "Guardar cambios";
+    $("btnSubmitAdminTablaConsultaConsulta").textContent = "Guardar cambios";
+    $("admEditCtId").value = row.id;
+    $("admEditCtIdView").value = row.id;
+    $("admEditCtCodigo").value = row.codigo || "";
+    $("admEditCtNombre").value = row.nombre || "";
+    $("admEditCtTablaBd").value = row.tabla_bd || "";
+    $("admEditCtDescripcion").value = row.descripcion || "";
+    $("admEditCtColsPermitidas").value = row.columnas_permitidas || "";
+    $("admEditCtColsResultado").value = row.columnas_resultado || "";
+    $("admEditCtActivo").value = String(row.activo ?? 1);
+    $("admCtEquiposFiltro").value = "";
+    setAdminTablaConsultaIdFieldVisibility(true);
+  }
+
+  function getAdminTablaConsultaPayloadFromForm() {
+    return {
+      codigo: $("admEditCtCodigo")?.value?.trim(),
+      nombre: $("admEditCtNombre")?.value?.trim(),
+      tabla_bd: $("admEditCtTablaBd")?.value?.trim(),
+      descripcion: $("admEditCtDescripcion")?.value?.trim() || null,
+      columnas_permitidas: $("admEditCtColsPermitidas")?.value?.trim(),
+      columnas_resultado: $("admEditCtColsResultado")?.value?.trim() || null,
+      activo: Number($("admEditCtActivo")?.value || 1),
+    };
+  }
+
+  function validateAdminTablaConsultaCodigo() {
+    const codigoInput = $("admEditCtCodigo");
+    if (!codigoInput) return true;
+    const value = (codigoInput.value || "").trim();
+    if (!value) {
+      codigoInput.setCustomValidity("El código es obligatorio.");
+      return false;
+    }
+    if (!/^[A-Za-z0-9_]+$/.test(value)) {
+      codigoInput.setCustomValidity("El código solo puede contener letras, números y guion bajo, sin espacios ni tildes.");
+      return false;
+    }
+    codigoInput.setCustomValidity("");
+    return true;
+  }
+
+  function validateAdminTablaConsultaForm() {
+    const payload = getAdminTablaConsultaPayloadFromForm();
+    const currentStep = state.adminTablaConsultaConfigurator.step || "datos";
+    const requiresTechnicalFields = !getAdminTablaConsultaSelected()?.id || currentStep === "consulta";
+    const nombreInput = $("admEditCtNombre");
+    const tablaBdInput = $("admEditCtTablaBd");
+    const colsPermitidasInput = $("admEditCtColsPermitidas");
+
+    if (nombreInput) {
+      nombreInput.setCustomValidity(payload.nombre ? "" : "El nombre es obligatorio.");
+    }
+    if (tablaBdInput) {
+      tablaBdInput.setCustomValidity(!requiresTechnicalFields || payload.tabla_bd ? "" : "La tabla física es obligatoria.");
+    }
+    if (colsPermitidasInput) {
+      colsPermitidasInput.setCustomValidity(!requiresTechnicalFields || payload.columnas_permitidas ? "" : "Debes indicar al menos una columna permitida.");
+    }
+
+    const isCodigoValid = validateAdminTablaConsultaCodigo();
+    const form = $("formAdminTablaConsultaEdit");
+    return !!(form?.reportValidity() && isCodigoValid);
+  }
+
+  function canUseAdminTablaConsultaAdvancedSteps() {
+    const tabla = getAdminTablaConsultaSelected();
+    return !!(tabla?.id && tabla?.codigo);
+  }
+
+  function getAdminTablaConsultaStepAvailability() {
+    const hasTabla = canUseAdminTablaConsultaAdvancedSteps();
+    return {
+      datos: true,
+      consulta: true,
+      equipos: hasTabla,
+      revision: hasTabla,
+    };
+  }
+
+  function syncAdminTablaConsultaFlowActions() {
+    const hasTabla = canUseAdminTablaConsultaAdvancedSteps();
+    const btnDatos = $("btnCfgTablaGoToConsulta");
+    const btnConsulta = $("btnCfgTablaGoToEquipos");
+
+    if (btnDatos) btnDatos.disabled = false;
+    if (btnConsulta) btnConsulta.disabled = !hasTabla;
+  }
+
+  function setAdminTablaConsultaStep(stepName) {
+    const availability = getAdminTablaConsultaStepAvailability();
+    const targetStep = availability[stepName] ? stepName : "datos";
+    state.adminTablaConsultaConfigurator.step = targetStep;
+
+    document.querySelectorAll("[data-tabla-config-step]").forEach((btn) => {
+      const step = btn.dataset.tablaConfigStep;
+      const enabled = !!availability[step];
+      btn.classList.toggle("is-active", step === targetStep);
+      btn.classList.toggle("is-disabled", !enabled);
+      btn.disabled = !enabled;
+    });
+
+    document.querySelectorAll("[data-tabla-config-panel]").forEach((panel) => {
+      panel.classList.toggle("is-active", panel.dataset.tablaConfigPanel === targetStep);
+    });
+
+    syncAdminTablaConsultaFlowActions();
+  }
+
+  function splitAdminTablaColumns(value) {
+    return (value || "")
+      .split(";")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  function renderAdminTablaConsultaReview() {
+    const wrap = $("cfgTablaReviewGrid");
+    if (!wrap) return;
+
+    const selected = getAdminTablaConsultaSelected();
+    const tabla = selected?.id
+      ? { ...selected, ...getAdminTablaConsultaPayloadFromForm(), id: selected.id }
+      : null;
+
+    if (!tabla?.id) {
+      wrap.innerHTML = `<div class="result-empty">Aún no hay una tabla seleccionada para resumir.</div>`;
       return;
     }
 
-    sel.innerHTML =
-      `<option value="">Seleccione tabla</option>` +
-      rows.map((r) => `<option value="${esc(r.id)}">${esc(r.codigo)} - ${esc(r.nombre)}</option>`).join("");
+    const columnasPermitidas = splitAdminTablaColumns(tabla.columnas_permitidas);
+    const columnasResultado = splitAdminTablaColumns(tabla.columnas_resultado);
+    const equiposAsignados = Array.from(new Set((state.adminTablaConsultaEquipoIds || []).map(Number))).length;
+
+    wrap.innerHTML = `
+      <div class="kv"><label>ID</label><div class="mono">${esc(tabla.id)}</div></div>
+      <div class="kv"><label>Código</label><div class="mono">${esc(tabla.codigo || "-")}</div></div>
+      <div class="kv"><label>Nombre</label><div>${esc(tabla.nombre || "-")}</div></div>
+      <div class="kv"><label>Activo</label><div>${Number(tabla.activo) === 1 ? "Sí" : "No"}</div></div>
+      <div class="kv"><label>Tabla BD</label><div class="mono">${esc(tabla.tabla_bd || "-")}</div></div>
+      <div class="kv"><label>Columnas filtro</label><div>${columnasPermitidas.length}</div></div>
+      <div class="kv"><label>Columnas resultado</label><div>${columnasResultado.length || "Sin restricción explícita"}</div></div>
+      <div class="kv"><label>Equipos asignados</label><div>${equiposAsignados}</div></div>
+    `;
   }
 
   function renderAdmCtEquiposChecks() {
@@ -1806,8 +3243,22 @@
       state.adminEquipos,
       state.adminTablaConsultaEquipoIds,
       "adminTablaConsultaEquipoIds",
-      $("admCtEquiposFiltro")?.value || ""
+      $("admCtEquiposFiltro")?.value || "",
+      () => {
+        renderEntitySelectionInfo("admTablaEquiposSeleccionInfo", state.adminTablaConsultaEquipoIds, "equipos", "equipo", "equipos");
+        renderAdminTablaConsultaReview();
+      }
     );
+    renderEntitySelectionInfo("admTablaEquiposSeleccionInfo", state.adminTablaConsultaEquipoIds, "equipos", "equipo", "equipos");
+  }
+
+  function updateAdminTablasConsultaPaginationControls(page, totalPages, totalItems) {
+    const info = $("admCtPageInfo");
+    const prev = $("admCtPrevPage");
+    const next = $("admCtNextPage");
+    if (info) info.textContent = `Página ${page} de ${totalPages} (${totalItems} registros)`;
+    if (prev) prev.disabled = page <= 1;
+    if (next) next.disabled = page >= totalPages;
   }
 
   function renderAdminTablasConsultaTable(rows = []) {
@@ -1825,10 +3276,10 @@
         <td class="mono">${esc(r.codigo)}</td>
         <td>${esc(r.nombre)}</td>
         <td class="mono">${esc(r.tabla_bd)}</td>
-        <td>${Number(r.activo) === 1 ? "ACTIVO" : "INACTIVO"}</td>
+        <td>${Number(r.activo) === 1 ? '<span class="status-pill status-OK">Activo</span>' : '<span class="status-pill status-CANCELADO">Inactivo</span>'}</td>
         <td>
           <div class="inline-controls">
-            <button class="btn btn--ghost btn--sm btn-admct-edit" data-id="${esc(r.id)}">Editar</button>
+            <button class="btn btn--ghost btn--sm btn-admct-edit" data-id="${esc(r.id)}">Configurar</button>
             <button class="btn btn--ghost btn--sm btn-admct-toggle" data-id="${esc(r.id)}" data-next="${Number(r.activo) === 1 ? "0" : "1"}">
               ${Number(r.activo) === 1 ? "Desactivar" : "Activar"}
             </button>
@@ -1846,16 +3297,7 @@
           return;
         }
 
-        $("admEditCtId").value = row.id;
-        $("admEditCtIdView").value = row.id;
-        $("admEditCtCodigo").value = row.codigo || "";
-        $("admEditCtNombre").value = row.nombre || "";
-        $("admEditCtTablaBd").value = row.tabla_bd || "";
-        $("admEditCtDescripcion").value = row.descripcion || "";
-        $("admEditCtColsPermitidas").value = row.columnas_permitidas || "";
-        $("admEditCtColsResultado").value = row.columnas_resultado || "";
-        $("admEditCtActivo").value = String(row.activo ?? 1);
-        openAdminTablaConsultaModal();
+        await openAdminTablaConsultaEdit(row);
       });
     });
 
@@ -1878,137 +3320,233 @@
     });
   }
 
-  async function saveAdminTablaConsultaFromModal(ev) {
-    ev.preventDefault();
-    const id = $("admEditCtId")?.value?.trim();
-    if (!id) {
-      showAlert("No hay tabla seleccionada para editar.", "err");
-      return;
-    }
-
-    const payload = {
-      codigo: $("admEditCtCodigo")?.value?.trim(),
-      nombre: $("admEditCtNombre")?.value?.trim(),
-      tabla_bd: $("admEditCtTablaBd")?.value?.trim(),
-      descripcion: $("admEditCtDescripcion")?.value?.trim() || null,
-      columnas_permitidas: $("admEditCtColsPermitidas")?.value?.trim(),
-      columnas_resultado: $("admEditCtColsResultado")?.value?.trim() || null,
-      activo: Number($("admEditCtActivo")?.value || 1),
-    };
-
-    if (!payload.codigo || !payload.nombre || !payload.tabla_bd || !payload.columnas_permitidas) {
-      showAlert("Código, nombre, tabla BD y columnas permitidas son obligatorios.", "err");
-      return;
-    }
-
-    try {
-      await api(`/admin/tablas-consulta/${encodeURIComponent(id)}`, {
-        method: "PATCH",
-        body: JSON.stringify(payload),
-      });
-      closeAdminTablaConsultaModal();
-      showAlert(`Tabla whitelist ${id} actualizada.`, "ok");
-      await loadAdminTablasConsulta();
-      await loadConsultaTablasDisponibles();
-    } catch (e) {
-      showAlert(`No se pudo actualizar tabla whitelist: ${e.message}`, "err");
-    }
-  }
-
   async function loadAdminTablasConsulta() {
-    const isAdmin = state.me?.roles?.includes("ADMIN") || state.me?.username === "admin";
-    if (!isAdmin) return;
+    const tb = $("tbodyAdmCt");
+    if (!tb) return;
 
+    const isAdmin = state.me?.roles?.includes("ADMIN") || state.me?.username === "admin";
+    if (!isAdmin) {
+      tb.innerHTML = `<tr><td colspan="6" class="table-empty">Sin permisos.</td></tr>`;
+      return;
+    }
+
+    tb.innerHTML = `<tr><td colspan="6" class="table-empty">Cargando...</td></tr>`;
     try {
-      const out = await api("/admin/tablas-consulta?page=1&page_size=500");
+      const pageSize = Number($("admCtPageSize")?.value || state.admCtPageSize || 10);
+      const params = new URLSearchParams();
+      params.set("page", String(state.admCtCurrentPage || 1));
+      params.set("page_size", String(pageSize));
+      const q = $("admCtFiltroQ")?.value?.trim();
+      if (q) params.set("q", q);
+
+      const out = await api(`/admin/tablas-consulta?${params.toString()}`);
       state.adminTablasConsulta = out?.items || [];
+      state.admCtCurrentPage = Number(out?.page || 1);
+      state.admCtPageSize = Number(out?.page_size || pageSize);
+      if ($("admCtPageSize")) $("admCtPageSize").value = String(state.admCtPageSize);
       renderAdminTablasConsultaTable(state.adminTablasConsulta);
-      fillAdmCtTablaEquipoSelect();
+      updateAdminTablasConsultaPaginationControls(
+        Number(out?.page || 1),
+        Number(out?.total_pages || 1),
+        Number(out?.total || 0)
+      );
     } catch (e) {
+      tb.innerHTML = `<tr><td colspan="6" class="table-empty">Error al cargar tablas.</td></tr>`;
       showAlert(`No se pudo cargar whitelist de tablas: ${e.message}`, "err");
     }
   }
 
-  async function createAdminTablaConsulta() {
-    const payload = {
-      codigo: $("admCtCodigo")?.value?.trim(),
-      nombre: $("admCtNombre")?.value?.trim(),
-      tabla_bd: $("admCtTablaBd")?.value?.trim(),
-      descripcion: $("admCtDescripcion")?.value?.trim() || null,
-      columnas_permitidas: $("admCtColsPermitidas")?.value?.trim(),
-      columnas_resultado: $("admCtColsResultado")?.value?.trim() || null,
-      activo: Number($("admCtActivo")?.value || 1),
-    };
-
-    if (!payload.codigo || !payload.nombre || !payload.tabla_bd || !payload.columnas_permitidas) {
-      showAlert("Completa código, nombre, tabla BD y columnas permitidas.", "err");
-      return;
-    }
-
-    try {
-      await api("/admin/tablas-consulta", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-      $("admCtCodigo").value = "";
-      $("admCtNombre").value = "";
-      $("admCtTablaBd").value = "";
-      $("admCtDescripcion").value = "";
-      $("admCtColsPermitidas").value = "";
-      $("admCtColsResultado").value = "";
-      $("admCtActivo").value = "1";
-      showAlert("Tabla agregada al whitelist.", "ok");
-      await loadAdminTablasConsulta();
-      await loadConsultaTablasDisponibles();
-    } catch (e) {
-      showAlert(`No se pudo crear tabla whitelist: ${e.message}`, "err");
-    }
-  }
-
   async function loadEquiposTablaConsultaSeleccionada() {
-    const tablaId = $("admCtTablaEquipo")?.value?.trim();
-    if (!tablaId) {
+    const tabla = getAdminTablaConsultaSelected();
+    if (!tabla?.id) {
       state.adminTablaConsultaEquipoIds = [];
       renderAdmCtEquiposChecks();
+      renderAdminTablaConsultaReview();
       return;
     }
 
     try {
-      const rows = await api(`/admin/tablas-consulta/${encodeURIComponent(tablaId)}/equipos`);
+      const rows = await api(`/admin/tablas-consulta/${encodeURIComponent(tabla.id)}/equipos`);
       state.adminTablaConsultaEquipoIds = (rows || []).map((r) => Number(r.id));
       renderAdmCtEquiposChecks();
+      renderAdminTablaConsultaReview();
     } catch (e) {
       showAlert(`No se pudieron cargar equipos de la tabla: ${e.message}`, "err");
     }
   }
 
   async function saveEquiposTablaConsulta() {
-    const tablaId = $("admCtTablaEquipo")?.value?.trim();
-    if (!tablaId) {
-      showAlert("Selecciona una tabla para asignar equipos.", "err");
+    const btn = $("btnAdmCtGuardarEquipos");
+    const tabla = getAdminTablaConsultaSelected();
+    if (!tabla?.id) {
+      showAlert("Primero guarda la tabla.", "err");
       return;
     }
     try {
-      await api(`/admin/tablas-consulta/${encodeURIComponent(tablaId)}/equipos`, {
+      if (btn) {
+        btn.disabled = true;
+        btn.dataset.prevText = btn.textContent || "";
+        btn.textContent = "Guardando...";
+      }
+      await api(`/admin/tablas-consulta/${encodeURIComponent(tabla.id)}/equipos`, {
         method: "PUT",
         body: JSON.stringify({ equipo_ids: (state.adminTablaConsultaEquipoIds || []).map(Number) }),
       });
-      showAlert("Equipos de tabla actualizados.", "ok");
+      showAlert(`Asignación aplicada para tabla ${tabla.codigo || tabla.id}.`, "ok");
       await loadConsultaTablasDisponibles();
+      await loadEquiposTablaConsultaSeleccionada();
+      setAdminTablaConsultaStep("revision");
+      renderAdminTablaConsultaReview();
     } catch (e) {
       showAlert(`No se pudo guardar asignación de equipos: ${e.message}`, "err");
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = btn.dataset.prevText || "Guardar asignación";
+      }
+    }
+  }
+
+  async function hydrateConfiguratorForTablaConsulta(tabla, { mode = "edit", step = "datos" } = {}) {
+    state.adminTablaConsultaConfigurator.mode = mode;
+    setAdminTablaConsultaSelected(tabla || null);
+    syncAdminTablaConsultaIdVisibility();
+    setAdminTablaConsultaStep(step);
+    openAdminTablaConsultaModal();
+    renderAdmCtEquiposChecks();
+    renderAdminTablaConsultaReview();
+    syncAdminTablaConsultaFlowActions();
+
+    if (canUseAdminTablaConsultaAdvancedSteps()) {
+      await loadEquiposTablaConsultaSeleccionada();
+    } else {
+      state.adminTablaConsultaEquipoIds = [];
+      renderAdmCtEquiposChecks();
+      renderAdminTablaConsultaReview();
+    }
+  }
+
+  async function openAdminTablaConsultaCreate() {
+    resetAdminTablaConsultaModalForCreate();
+    state.adminTablaConsultaEquipoIds = [];
+    await hydrateConfiguratorForTablaConsulta(null, { mode: "create", step: "datos" });
+  }
+
+  async function openAdminTablaConsultaEdit(row) {
+    prepareAdminTablaConsultaModalForEdit(row);
+    state.adminTablaConsultaEquipoIds = [];
+    await hydrateConfiguratorForTablaConsulta(row, { mode: "edit", step: "datos" });
+  }
+
+  async function saveAdminTablaConsultaFromModal(ev) {
+    ev.preventDefault();
+    const id = $("admEditCtId")?.value?.trim();
+    const payload = getAdminTablaConsultaPayloadFromForm();
+    if (!payload.codigo || !payload.nombre) {
+      setAdminTablaConsultaStep("datos");
+      showAlert("Completa código y nombre antes de guardar la tabla.", "err");
+      return;
+    }
+    if (!id && state.adminTablaConsultaConfigurator.step === "datos") {
+      setAdminTablaConsultaStep("consulta");
+      showAlert("Completa la definición técnica antes de crear la tabla.", "err");
+      return;
+    }
+    if (!validateAdminTablaConsultaForm()) return;
+
+    try {
+      const out = await api(id ? `/admin/tablas-consulta/${encodeURIComponent(id)}` : "/admin/tablas-consulta", {
+        method: id ? "PATCH" : "POST",
+        body: JSON.stringify(payload),
+      });
+      $("admEditCtId").value = out.id;
+      $("admEditCtIdView").value = out.id;
+      setAdminTablaConsultaSelected(out);
+      const nextStep = id ? (state.adminTablaConsultaConfigurator.step || "datos") : "equipos";
+      await hydrateConfiguratorForTablaConsulta(out, {
+        mode: id ? "edit" : "create",
+        step: nextStep,
+      });
+      showAlert(id ? `Tabla whitelist ${id} actualizada.` : "Tabla agregada al whitelist.", "ok");
+      await loadAdminTablasConsulta();
+      await loadConsultaTablasDisponibles();
+    } catch (e) {
+      showAlert(`${id ? "No se pudo actualizar tabla whitelist" : "No se pudo crear tabla whitelist"}: ${e.message}`, "err");
     }
   }
 
   function setupAdminTablasConsulta() {
-    $("btnAdmCtCrear")?.addEventListener("click", createAdminTablaConsulta);
+    $("btnOpenAdmCtCreateModal")?.addEventListener("click", openAdminTablaConsultaCreate);
     $("btnAdmCtRefrescar")?.addEventListener("click", loadAdminTablasConsulta);
     $("btnCloseAdmCtModal")?.addEventListener("click", closeAdminTablaConsultaModal);
     $("btnCloseAdmCtModalBg")?.addEventListener("click", closeAdminTablaConsultaModal);
     $("formAdminTablaConsultaEdit")?.addEventListener("submit", saveAdminTablaConsultaFromModal);
-    $("admCtTablaEquipo")?.addEventListener("change", loadEquiposTablaConsultaSeleccionada);
+    $("btnCfgTablaGoToConsulta")?.addEventListener("click", () => {
+      setAdminTablaConsultaStep("consulta");
+    });
+    $("btnCfgTablaGoToEquipos")?.addEventListener("click", async () => {
+      if (!canUseAdminTablaConsultaAdvancedSteps()) {
+        showAlert("Primero guarda la tabla para continuar.", "err");
+        return;
+      }
+      setAdminTablaConsultaStep("equipos");
+      await loadEquiposTablaConsultaSeleccionada();
+    });
     $("admCtEquiposFiltro")?.addEventListener("input", renderAdmCtEquiposChecks);
     $("btnAdmCtGuardarEquipos")?.addEventListener("click", saveEquiposTablaConsulta);
+    $("btnCfgTablaOpenEquiposAdmin")?.addEventListener("click", () => {
+      closeAdminTablaConsultaModal();
+      activateTab("tab-admin-equipos");
+    });
+    $("btnCfgTablaFinalizar")?.addEventListener("click", async () => {
+      closeAdminTablaConsultaModal();
+      await loadAdminTablasConsulta();
+    });
+    document.querySelectorAll("[data-tabla-config-step]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const step = btn.dataset.tablaConfigStep;
+        setAdminTablaConsultaStep(step);
+        if (step === "equipos") await loadEquiposTablaConsultaSeleccionada();
+        if (step === "revision") renderAdminTablaConsultaReview();
+      });
+    });
+    $("admEditCtCodigo")?.addEventListener("input", validateAdminTablaConsultaCodigo);
+    $("admEditCtNombre")?.addEventListener("input", () => {
+      const nombreInput = $("admEditCtNombre");
+      if (!nombreInput) return;
+      nombreInput.setCustomValidity((nombreInput.value || "").trim() ? "" : "El nombre es obligatorio.");
+    });
+    $("admEditCtTablaBd")?.addEventListener("input", () => {
+      const tablaBdInput = $("admEditCtTablaBd");
+      if (!tablaBdInput) return;
+      tablaBdInput.setCustomValidity((tablaBdInput.value || "").trim() ? "" : "La tabla física es obligatoria.");
+    });
+    $("admEditCtColsPermitidas")?.addEventListener("input", () => {
+      const colsInput = $("admEditCtColsPermitidas");
+      if (!colsInput) return;
+      colsInput.setCustomValidity((colsInput.value || "").trim() ? "" : "Debes indicar al menos una columna permitida.");
+    });
+    $("formAdminTablaConsultaEdit")?.addEventListener("input", () => {
+      if (state.adminTablaConsultaConfigurator.step === "revision") {
+        renderAdminTablaConsultaReview();
+      }
+    });
+    $("admCtFiltroQ")?.addEventListener("input", () => {
+      state.admCtCurrentPage = 1;
+      loadAdminTablasConsulta();
+    });
+    $("admCtPageSize")?.addEventListener("change", () => {
+      state.admCtCurrentPage = 1;
+      loadAdminTablasConsulta();
+    });
+    $("admCtPrevPage")?.addEventListener("click", () => {
+      state.admCtCurrentPage = Math.max(1, state.admCtCurrentPage - 1);
+      loadAdminTablasConsulta();
+    });
+    $("admCtNextPage")?.addEventListener("click", () => {
+      state.admCtCurrentPage = state.admCtCurrentPage + 1;
+      loadAdminTablasConsulta();
+    });
   }
 
   // ---------- Usuarios ----------
@@ -2057,12 +3595,23 @@
           <td>${esc((u.roles || []).join(", "))}</td>
           <td>${u.activo === 1 ? '<span class="status-pill status-OK">ACTIVO</span>' : '<span class="status-pill status-CANCELADO">INACTIVO</span>'}</td>
           <td>
+            <button class="btn btn--ghost btn--sm btn-user-equipos" data-user-id="${esc(u.id)}">
+              Equipos
+            </button>
             <button class="btn btn--ghost btn--sm btn-reset-password" data-user-id="${esc(u.id)}" data-username="${esc(u.username)}">
               Restaurar contraseña
             </button>
           </td>
         </tr>
       `).join("");
+
+      document.querySelectorAll(".btn-user-equipos").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const userId = Number(btn.dataset.userId || 0);
+          const user = (state.adminUsuarios || []).find((row) => Number(row.id) === userId) || null;
+          await openUsuarioEquiposModalForUser(user);
+        });
+      });
 
       document.querySelectorAll(".btn-reset-password").forEach((btn) => {
         btn.addEventListener("click", async () => {
@@ -2136,6 +3685,11 @@
   function setupUsuarios() {
     $("btnCambiarPassword")?.addEventListener("click", cambiarPassword);
     $("btnCrearUsuario")?.addEventListener("click", crearUsuarioAdmin);
+    $("btnCloseAdmUsuarioEquiposModal")?.addEventListener("click", closeAdminUsuarioEquiposModal);
+    $("btnCloseAdmUsuarioEquiposModalBg")?.addEventListener("click", closeAdminUsuarioEquiposModal);
+    $("btnCancelarUsuarioEquipos")?.addEventListener("click", closeAdminUsuarioEquiposModal);
+    $("btnGuardarUsuarioEquipos")?.addEventListener("click", saveUsuarioEquiposAdmin);
+    $("admUsuarioEquiposFiltro")?.addEventListener("input", renderUsuarioEquiposChecks);
   }
 
   function setupAuthUI() {

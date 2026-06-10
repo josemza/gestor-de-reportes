@@ -82,6 +82,28 @@ class EquipoAsignacionIn(BaseModel):
     equipo_ids: list[int] = Field(default_factory=list)
 
 
+class EquipoUsuariosAsignacionIn(BaseModel):
+    usuario_ids: list[int] = Field(default_factory=list)
+
+
+class EquipoReportesAsignacionIn(BaseModel):
+    reporte_ids: list[int] = Field(default_factory=list)
+
+
+class EquipoResumenOut(BaseModel):
+    id: int
+    nombre: str
+    activo: int
+    usuarios_count: int
+    reportes_count: int
+
+
+class EquipoResumenDetalleOut(BaseModel):
+    equipo: EquipoOut
+    usuarios_count: int
+    reportes_count: int
+
+
 class TablaConsultaAdminCreate(BaseModel):
     codigo: str = Field(min_length=2, max_length=100)
     nombre: str = Field(min_length=2, max_length=255)

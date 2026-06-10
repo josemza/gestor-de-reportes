@@ -36,7 +36,10 @@ test/
 *.zip
 *.csv
 
-#
+# docs
+docs/
+
+# otros
 app/input/
 app/output/
 app/conexion/
@@ -45,5 +48,7 @@ test/
 arquitectura.txt
 consulta_tablas.md
 metricas.md
-guia_actualizacion_columna_parametros_ejemplo.md
+guia_*.md
 project-context.md
+PROPUESTA*.md
+UX_*.md

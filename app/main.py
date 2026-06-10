@@ -40,6 +40,10 @@ from .schemas_admin import (
     EquipoUpdate,
     EquipoOut,
     EquipoAsignacionIn,
+    EquipoUsuariosAsignacionIn,
+    EquipoReportesAsignacionIn,
+    EquipoResumenOut,
+    EquipoResumenDetalleOut,
     TablaConsultaAdminCreate,
     TablaConsultaAdminOut,
     TablaConsultaAdminPageOut,
@@ -182,6 +186,54 @@ def _is_admin_user(current_user: dict[str, Any]) -> bool:
     return "ADMIN" in current_user["roles"] or current_user["username"] == "admin"
 
 
+def _serialize_user_out(db: Session, user: Usuario) -> UserOut:
+    role_rows = db.execute(
+        select(Rol.nombre)
+        .join(UsuarioRol, UsuarioRol.rol_id == Rol.id)
+        .where(UsuarioRol.usuario_id == user.id)
+    ).all()
+    roles = [r[0] for r in role_rows]
+    return UserOut(
+        id=user.id,
+        username=user.username,
+        activo=user.activo,
+        roles=roles,
+    )
+
+
+def _get_equipo_or_404(db: Session, equipo_id: int) -> Equipo:
+    equipo = db.get(Equipo, equipo_id)
+    if not equipo:
+        raise HTTPException(status_code=404, detail="Equipo no existe")
+    return equipo
+
+
+def _require_active_equipo(equipo: Equipo) -> None:
+    if equipo.activo != 1:
+        raise HTTPException(status_code=400, detail="El equipo no existe o está inactivo")
+
+
+def _build_equipo_resumen_query():
+    return (
+        select(
+            Equipo.id.label("id"),
+            Equipo.nombre.label("nombre"),
+            Equipo.activo.label("activo"),
+            func.count(func.distinct(UsuarioEquipo.usuario_id)).label("usuarios_count"),
+            func.count(func.distinct(ReporteEquipo.reporte_id)).label("reportes_count"),
+        )
+        .outerjoin(
+            UsuarioEquipo,
+            (UsuarioEquipo.equipo_id == Equipo.id) & (UsuarioEquipo.activo == 1),
+        )
+        .outerjoin(
+            ReporteEquipo,
+            (ReporteEquipo.equipo_id == Equipo.id) & (ReporteEquipo.activo == 1),
+        )
+        .group_by(Equipo.id, Equipo.nombre, Equipo.activo)
+    )
+
+
 def _resolve_allowed_tabla(
     db: Session,
     tabla_id: int,
@@ -193,10 +245,12 @@ def _resolve_allowed_tabla(
     return db.execute(
         select(TablaConsultaPermitida)
         .join(TablaConsultaEquipo, TablaConsultaEquipo.tabla_id == TablaConsultaPermitida.id)
+        .join(Equipo, Equipo.id == TablaConsultaEquipo.equipo_id)
         .join(UsuarioEquipo, UsuarioEquipo.equipo_id == TablaConsultaEquipo.equipo_id)
         .where(
             TablaConsultaPermitida.id == tabla_id,
             TablaConsultaPermitida.activo == 1,
+            Equipo.activo == 1,
             TablaConsultaEquipo.activo == 1,
             UsuarioEquipo.activo == 1,
             UsuarioEquipo.usuario_id == current_user["id"],
@@ -266,9 +320,11 @@ def list_reportes(
     rows = db.execute(
         select(Reporte)
         .join(ReporteEquipo, ReporteEquipo.reporte_id == Reporte.id)
+        .join(Equipo, Equipo.id == ReporteEquipo.equipo_id)
         .join(UsuarioEquipo, UsuarioEquipo.equipo_id == ReporteEquipo.equipo_id)
         .where(
             Reporte.activo == 1,
+            Equipo.activo == 1,
             ReporteEquipo.activo == 1,
             UsuarioEquipo.activo == 1,
             UsuarioEquipo.usuario_id == current_user["id"],
@@ -438,8 +494,10 @@ def create_solicitud(
         allowed = db.execute(
             select(ReporteEquipo.id)
             .join(UsuarioEquipo, UsuarioEquipo.equipo_id == ReporteEquipo.equipo_id)
+            .join(Equipo, Equipo.id == ReporteEquipo.equipo_id)
             .where(
                 ReporteEquipo.reporte_id == rep.id,
+                Equipo.activo == 1,
                 ReporteEquipo.activo == 1,
                 UsuarioEquipo.usuario_id == current_user["id"],
                 UsuarioEquipo.activo == 1,
@@ -728,22 +786,7 @@ def list_usuarios(
     users = db.execute(
         select(Usuario).order_by(Usuario.username.asc())
     ).scalars().all()
-
-    out: list[UserOut] = []
-    for user in users:
-        role_rows = db.execute(
-            select(Rol.nombre)
-            .join(UsuarioRol, UsuarioRol.rol_id == Rol.id)
-            .where(UsuarioRol.usuario_id == user.id)
-        ).all()
-        roles = [r[0] for r in role_rows]
-        out.append(UserOut(
-            id=user.id,
-            username=user.username,
-            activo=user.activo,
-            roles=roles,
-        ))
-    return out
+    return [_serialize_user_out(db, user) for user in users]
 
 
 @app.post("/admin/usuarios", response_model=UserCreateOut, tags=["admin"])
@@ -827,6 +870,26 @@ def list_equipos(
     return db.execute(select(Equipo).order_by(Equipo.nombre.asc())).scalars().all()
 
 
+@app.get("/admin/equipos/resumen", response_model=list[EquipoResumenOut], tags=["admin"])
+def list_equipos_resumen(
+    db: Session = Depends(get_db),
+    _user=Depends(require_admin_rutas),
+):
+    rows = db.execute(
+        _build_equipo_resumen_query().order_by(Equipo.nombre.asc())
+    ).all()
+    return [
+        EquipoResumenOut(
+            id=row.id,
+            nombre=row.nombre,
+            activo=row.activo,
+            usuarios_count=row.usuarios_count,
+            reportes_count=row.reportes_count,
+        )
+        for row in rows
+    ]
+
+
 @app.post("/admin/equipos", response_model=EquipoOut, tags=["admin"])
 def create_equipo(
     payload: EquipoCreate,
@@ -877,6 +940,98 @@ def update_equipo(
     return row
 
 
+@app.get("/admin/equipos/{equipo_id}/usuarios", response_model=list[UserOut], tags=["admin"])
+def get_usuarios_equipo(
+    equipo_id: int,
+    db: Session = Depends(get_db),
+    _user=Depends(require_admin_rutas),
+):
+    _get_equipo_or_404(db, equipo_id)
+    users = db.execute(
+        select(Usuario)
+        .join(UsuarioEquipo, UsuarioEquipo.usuario_id == Usuario.id)
+        .where(UsuarioEquipo.equipo_id == equipo_id, UsuarioEquipo.activo == 1)
+        .order_by(Usuario.username.asc())
+    ).scalars().all()
+    return [_serialize_user_out(db, user) for user in users]
+
+
+@app.put("/admin/equipos/{equipo_id}/usuarios", tags=["admin"])
+def set_usuarios_equipo(
+    equipo_id: int,
+    payload: EquipoUsuariosAsignacionIn,
+    db: Session = Depends(get_db),
+    _user=Depends(require_admin_rutas),
+):
+    _get_equipo_or_404(db, equipo_id)
+
+    ids = sorted(set(payload.usuario_ids))
+    if ids:
+        found = db.execute(select(Usuario.id).where(Usuario.id.in_(ids))).scalars().all()
+        if len(found) != len(ids):
+            raise HTTPException(status_code=400, detail="Uno o más usuarios no existen")
+
+    db.execute(delete(UsuarioEquipo).where(UsuarioEquipo.equipo_id == equipo_id))
+    for usuario_id in ids:
+        db.add(UsuarioEquipo(usuario_id=usuario_id, equipo_id=equipo_id, activo=1))
+    db.commit()
+    return {"detail": "Usuarios del equipo actualizados correctamente"}
+
+
+@app.get("/admin/equipos/{equipo_id}/reportes", response_model=list[ReporteAdminOut], tags=["admin"])
+def get_reportes_equipo(
+    equipo_id: int,
+    db: Session = Depends(get_db),
+    _user=Depends(require_admin_rutas),
+):
+    _get_equipo_or_404(db, equipo_id)
+    return db.execute(
+        select(Reporte)
+        .join(ReporteEquipo, ReporteEquipo.reporte_id == Reporte.id)
+        .where(ReporteEquipo.equipo_id == equipo_id, ReporteEquipo.activo == 1)
+        .order_by(Reporte.codigo.asc())
+    ).scalars().all()
+
+
+@app.put("/admin/equipos/{equipo_id}/reportes", tags=["admin"])
+def set_reportes_equipo(
+    equipo_id: int,
+    payload: EquipoReportesAsignacionIn,
+    db: Session = Depends(get_db),
+    _user=Depends(require_admin_rutas),
+):
+    _get_equipo_or_404(db, equipo_id)
+
+    ids = sorted(set(payload.reporte_ids))
+    if ids:
+        found = db.execute(select(Reporte.id).where(Reporte.id.in_(ids))).scalars().all()
+        if len(found) != len(ids):
+            raise HTTPException(status_code=400, detail="Uno o más reportes no existen")
+
+    db.execute(delete(ReporteEquipo).where(ReporteEquipo.equipo_id == equipo_id))
+    for reporte_id in ids:
+        db.add(ReporteEquipo(reporte_id=reporte_id, equipo_id=equipo_id, activo=1))
+    db.commit()
+    return {"detail": "Reportes del equipo actualizados correctamente"}
+
+
+@app.get("/admin/equipos/{equipo_id}/resumen", response_model=EquipoResumenDetalleOut, tags=["admin"])
+def get_equipo_resumen(
+    equipo_id: int,
+    db: Session = Depends(get_db),
+    _user=Depends(require_admin_rutas),
+):
+    equipo = _get_equipo_or_404(db, equipo_id)
+    row = db.execute(
+        _build_equipo_resumen_query().where(Equipo.id == equipo_id)
+    ).one()
+    return EquipoResumenDetalleOut(
+        equipo=equipo,
+        usuarios_count=row.usuarios_count,
+        reportes_count=row.reportes_count,
+    )
+
+
 @app.get("/admin/usuarios/{usuario_id}/equipos", response_model=list[EquipoOut], tags=["admin"])
 def get_equipos_usuario(
     usuario_id: int,
@@ -909,9 +1064,9 @@ def set_equipos_usuario(
 
     ids = sorted(set(payload.equipo_ids))
     if ids:
-        found = db.execute(select(Equipo.id).where(Equipo.id.in_(ids), Equipo.activo == 1)).scalars().all()
+        found = db.execute(select(Equipo.id).where(Equipo.id.in_(ids))).scalars().all()
         if len(found) != len(ids):
-            raise HTTPException(status_code=400, detail="Uno o más equipos no existen o están inactivos")
+            raise HTTPException(status_code=400, detail="Uno o más equipos no existen")
 
     db.execute(delete(UsuarioEquipo).where(UsuarioEquipo.usuario_id == usuario_id))
     for equipo_id in ids:
@@ -1160,9 +1315,11 @@ def list_tablas_consulta_disponibles(
         rows = db.execute(
             select(TablaConsultaPermitida)
             .join(TablaConsultaEquipo, TablaConsultaEquipo.tabla_id == TablaConsultaPermitida.id)
+            .join(Equipo, Equipo.id == TablaConsultaEquipo.equipo_id)
             .join(UsuarioEquipo, UsuarioEquipo.equipo_id == TablaConsultaEquipo.equipo_id)
             .where(
                 TablaConsultaPermitida.activo == 1,
+                Equipo.activo == 1,
                 TablaConsultaEquipo.activo == 1,
                 UsuarioEquipo.activo == 1,
                 UsuarioEquipo.usuario_id == current_user["id"],
