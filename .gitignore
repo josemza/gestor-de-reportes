@@ -39,11 +39,17 @@ test/
 # docs
 docs/
 
+node_modules/
+
 # otros
 app/input/
 app/output/
 app/conexion/
 runtime/worker_log/
+runtime/worker_logs/
+runtime/worker_payloads/
+playwright-report/
+test-results/
 test/
 arquitectura.txt
 consulta_tablas.md
@@ -52,3 +58,4 @@ guia_*.md
 project-context.md
 PROPUESTA*.md
 UX_*.md
+package*.json

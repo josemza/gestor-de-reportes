@@ -1,6 +1,12 @@
+import re
 from datetime import datetime
 from typing import Any, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+INPUT_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{1,99}$")
+PERIODO_PATTERN = re.compile(r"^\d{6}$")
+TEXT_INPUT_MAX_LENGTH = 1000
 
 class HealthOut(BaseModel):
     status: str
@@ -37,6 +43,64 @@ class SolicitudCreate(BaseModel):
     parametros: dict[str, Any] = Field(default_factory=dict)
     max_intentos: int = 2
 
+
+class SolicitudInputValorIn(BaseModel):
+    codigo_input: str = Field(min_length=2, max_length=100)
+    valor: str | None = None
+    ruta_archivo: str | None = None
+
+    @field_validator("codigo_input")
+    @classmethod
+    def validate_codigo_input(cls, value: str) -> str:
+        code = value.strip()
+        if not INPUT_CODE_PATTERN.fullmatch(code):
+            raise ValueError("codigo_input debe cumplir ^[a-z][a-z0-9_]{1,99}$")
+        return code
+
+    @field_validator("valor")
+    @classmethod
+    def normalize_valor(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        txt = value.strip()
+        return txt or None
+
+    @field_validator("ruta_archivo")
+    @classmethod
+    def normalize_ruta_archivo(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        txt = value.strip()
+        return txt or None
+
+
+class SolicitudCreateV2(BaseModel):
+    reporte_codigo: str
+    inputs: list[SolicitudInputValorIn] = Field(default_factory=list)
+    parametros: dict[str, Any] = Field(default_factory=dict)
+    max_intentos: int = 2
+
+    @field_validator("reporte_codigo")
+    @classmethod
+    def validate_reporte_codigo(cls, value: str) -> str:
+        txt = value.strip()
+        if not txt:
+            raise ValueError("reporte_codigo es requerido")
+        return txt
+
+    @model_validator(mode="after")
+    def validate_unique_input_codes(self) -> "SolicitudCreateV2":
+        seen: set[str] = set()
+        duplicates: list[str] = []
+        for item in self.inputs:
+            if item.codigo_input in seen:
+                duplicates.append(item.codigo_input)
+            seen.add(item.codigo_input)
+        if duplicates:
+            dup_str = ", ".join(sorted(set(duplicates)))
+            raise ValueError(f"inputs contiene codigo_input duplicados: {dup_str}")
+        return self
+
 class SolicitudOut(BaseModel):
     request_id: str
     reporte_codigo: str
@@ -50,6 +114,77 @@ class SolicitudOut(BaseModel):
     fecha_inicio: datetime | None
     fecha_fin: datetime | None
     updated_at: datetime
+
+
+class SolicitudInputValorOut(BaseModel):
+    codigo_input: str
+    nombre_visible: str
+    tipo_input: str
+    obligatorio: int
+    valor: str | None
+    ruta_archivo: str | None
+    metadata: dict[str, Any] | None = None
+
+
+class SolicitudIntentoOut(BaseModel):
+    intento: int
+    modo_inputs: Literal["legacy", "multi_input"] | None = None
+    input_count: int | None = None
+    estado_resultado: str | None = None
+    log_path: str | None = None
+    payload_path: str | None = None
+    comando: str | None = None
+    duration_sec: float | None = None
+    timed_out: bool | None = None
+    returncode: int | None = None
+    stdout_tail: str | None = None
+    stderr_tail: str | None = None
+    worker_error: str | None = None
+    payload_preview: dict[str, Any] | None = None
+
+
+class SolicitudDetalleOut(SolicitudOut):
+    modo_inputs: Literal["legacy", "multi_input"]
+    ruta_input_legacy: str | None
+    parametros: dict[str, Any]
+    inputs_enviados: list[SolicitudInputValorOut]
+    intentos_registrados: int
+    max_intentos: int
+    intento_actual_o_ultimo: int | None
+    log_path_ultimo: str | None
+    payload_path_ultimo: str | None
+    comando_ultimo: str | None
+    intentos_detalle: list[SolicitudIntentoOut]
+
+
+class ReporteInputVisibleOut(BaseModel):
+    id: int
+    codigo_input: str
+    nombre_visible: str
+    tipo_input: str
+    obligatorio: int
+    orden: int
+    activo: int
+    tipos_permitidos: str | None
+
+    model_config = {"from_attributes": True}
+
+
+class ReporteInputsOut(BaseModel):
+    reporte_codigo: str
+    modo_inputs: Literal["legacy", "multi_input"]
+    inputs: list[ReporteInputVisibleOut]
+
+
+class ArchivoInputDisponibleOut(BaseModel):
+    nombre_archivo: str
+    ruta_archivo: str
+
+
+class ReporteInputArchivosOut(BaseModel):
+    reporte_codigo: str
+    codigo_input: str
+    archivos: list[ArchivoInputDisponibleOut]
 
 
 class SolicitudPageOut(BaseModel):

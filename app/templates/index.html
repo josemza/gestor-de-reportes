@@ -260,6 +260,11 @@
             <div class="result-empty">Selecciona una solicitud.</div>
           </div>
 
+          <h4 class="section-title">Intentos y evidencia</h4>
+          <div id="detalleIntentos" class="detail-attempts">
+            <div class="result-empty">Sin intentos registrados.</div>
+          </div>
+
           <h4 class="section-title mt-6">Eventos</h4>
           <div id="detalleEventos" class="timeline">
             <div class="result-empty">No hay eventos.</div>
@@ -678,43 +683,184 @@
 
           <section class="configurator-panel" data-config-panel="rutas">
             <div class="configurator-panel__header">
-              <h4>Entradas / rutas permitidas</h4>
+              <h4>Entradas del reporte</h4>
               <p id="cfgRutasStatus" class="muted">Guarda primero el reporte para habilitar esta sección.</p>
             </div>
 
-            <div class="form-grid form-compact form-layout-admin">
-              <section class="form-section field--full">
-                <div class="form-section__header">
-                  <h5>Nueva ruta permitida</h5>
-                </div>
-                <div class="form-layout-grid">
-                  <div class="field field--span-12">
-                    <label for="cfgRutaNueva">Nueva ruta base (UNC/local)</label>
-                    <div class="input-row input-row--split">
-                      <input id="cfgRutaNueva" type="text" placeholder="\\pps-nas\Reportes\Input\Ventas" />
-                      <button type="button" id="btnCfgAgregarRuta" class="btn btn--primary btn--inline">Agregar</button>
-                    </div>
-                    <small class="hint">Verificar que la ruta exista</small>
+            <section class="form-section field--full">
+              <div class="form-layout-grid">
+                <div class="field field--span-4">
+                  <label>Modo de entradas</label>
+                  <div class="config-mode-wrap">
+                    <span id="cfgInputModeBadge" class="badge badge--neutral">Modo de entradas: Legacy</span>
+                    <small id="cfgInputModeHint" class="hint">Guarda primero el reporte para habilitar la configuración avanzada.</small>
                   </div>
                 </div>
-              </section>
-            </div>
+                <div class="field field--span-8">
+                  <div id="cfgLegacyCompatibilityWarning" class="access-context-banner" hidden>
+                    <span class="access-context-banner__label">Compatibilidad legacy</span>
+                    <strong>Este reporte tiene inputs definidos. Las rutas legacy se mantienen por compatibilidad, pero el nuevo flujo multi-input usa carpetas configuradas por cada input de tipo archivo.</strong>
+                  </div>
+                </div>
+              </div>
+            </section>
 
-            <div class="table-wrap">
-              <table class="table table-compact" id="tablaCfgRutas">
-                <thead>
-                  <tr>
-                    <th style="width: 80px;">ID</th>
-                    <th>Ruta base</th>
-                    <th style="width: 120px;">Estado</th>
-                    <th style="width: 260px;">Acciones</th>
-                  </tr>
-                </thead>
-                <tbody id="cfgTbodyRutas">
-                  <tr><td colspan="4" class="table-empty">Guarda el reporte para administrar rutas.</td></tr>
-                </tbody>
-              </table>
-            </div>
+            <section id="cfgInputsSection" class="form-section field--full">
+              <div class="form-section__header form-section__header--between">
+                <div>
+                  <h5>Inputs del reporte</h5>
+                  <p class="muted">Define inputs múltiples, obligatoriedad, orden y carpetas por input tipo archivo.</p>
+                </div>
+                <button type="button" id="btnCfgOpenInputForm" class="btn btn--primary btn--inline">Agregar input</button>
+              </div>
+
+              <div id="cfgInputsEmpty" class="result-empty">
+                Este reporte sigue en modo legacy. Crea el primer input para pasar a modo multi-input.
+              </div>
+
+              <div id="cfgInputFormWrap" class="config-inline-editor" hidden>
+                <div class="config-inline-editor__header">
+                  <h6 id="cfgInputFormTitle">Nuevo input</h6>
+                  <button type="button" id="btnCfgCancelInputForm" class="btn btn--ghost btn--sm">Cancelar</button>
+                </div>
+                <form id="cfgInputForm" class="form-grid form-compact form-layout-admin">
+                  <div class="field field--span-3">
+                    <label for="cfgInputCodigo">Código interno</label>
+                    <input id="cfgInputCodigo" type="text" placeholder="archivo_ventas" />
+                  </div>
+                  <div class="field field--span-5">
+                    <label for="cfgInputNombre">Nombre visible</label>
+                    <input id="cfgInputNombre" type="text" placeholder="Archivo de ventas" />
+                  </div>
+                  <div class="field field--span-4">
+                    <label for="cfgInputTipo">Tipo</label>
+                    <select id="cfgInputTipo">
+                      <option value="archivo">archivo</option>
+                      <option value="texto">texto</option>
+                      <option value="periodo">periodo</option>
+                    </select>
+                  </div>
+                  <div class="field field--span-3">
+                    <label for="cfgInputObligatorio">Obligatorio</label>
+                    <select id="cfgInputObligatorio">
+                      <option value="1">Sí</option>
+                      <option value="0">No</option>
+                    </select>
+                  </div>
+                  <div class="field field--span-3">
+                    <label for="cfgInputOrden">Orden</label>
+                    <input id="cfgInputOrden" type="number" min="1" step="1" value="1" />
+                  </div>
+                  <div class="field field--span-3">
+                    <label for="cfgInputActivo">Activo</label>
+                    <select id="cfgInputActivo">
+                      <option value="1">Sí</option>
+                      <option value="0">No</option>
+                    </select>
+                  </div>
+                  <div id="cfgInputTiposField" class="field field--span-3">
+                    <label for="cfgInputTipos">Tipos permitidos</label>
+                    <input id="cfgInputTipos" type="text" placeholder="csv;xlsx" />
+                  </div>
+                  <div class="field field--full configurator-actions">
+                    <button type="submit" class="btn btn--primary btn--inline">Guardar input</button>
+                  </div>
+                </form>
+              </div>
+
+              <div class="table-wrap">
+                <table class="table table-compact" id="tablaCfgInputs">
+                  <thead>
+                    <tr>
+                      <th>Código</th>
+                      <th>Nombre visible</th>
+                      <th>Tipo</th>
+                      <th>Obligatorio</th>
+                      <th>Orden</th>
+                      <th>Estado</th>
+                      <th>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody id="cfgTbodyInputs">
+                    <tr><td colspan="7" class="table-empty">Guarda el reporte para administrar inputs.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section id="cfgInputFoldersWrap" class="form-section field--full" hidden>
+              <div class="form-section__header">
+                <h5 id="cfgInputFoldersTitle">Carpetas permitidas por input</h5>
+                <p id="cfgInputFoldersHint" class="muted">Selecciona un input de tipo archivo para administrar sus carpetas.</p>
+              </div>
+
+              <div class="form-layout-grid">
+                <div class="field field--span-12">
+                  <label for="cfgInputCarpetaNueva">Nueva ruta base (UNC/local)</label>
+                  <div class="input-row input-row--split">
+                    <input id="cfgInputCarpetaNueva" type="text" placeholder="\\pps-nas\Reportes\Input\Ventas" />
+                    <button type="button" id="btnCfgAgregarInputCarpeta" class="btn btn--primary btn--inline">Agregar carpeta</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="table-wrap">
+                <table class="table table-compact" id="tablaCfgInputFolders">
+                  <thead>
+                    <tr>
+                      <th style="width: 80px;">ID</th>
+                      <th>Ruta base</th>
+                      <th style="width: 120px;">Estado</th>
+                      <th style="width: 240px;">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody id="cfgInputFoldersTbody">
+                    <tr><td colspan="4" class="table-empty">Selecciona un input de tipo archivo para administrar carpetas.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section id="cfgLegacyRutasSection" class="form-section field--full">
+              <div class="form-section__header">
+                <h5 id="cfgLegacyRutasLabel">Rutas legacy del reporte</h5>
+                <p class="muted">Se mantienen por compatibilidad con el flujo actual basado en `ruta_input`.</p>
+              </div>
+
+              <div class="form-grid form-compact form-layout-admin">
+                <section class="form-section field--full form-section--nested">
+                  <div class="form-section__header">
+                    <h5>Nueva ruta permitida</h5>
+                  </div>
+                  <div class="form-layout-grid">
+                    <div class="field field--span-12">
+                      <label for="cfgRutaNueva">Nueva ruta base (UNC/local)</label>
+                      <div class="input-row input-row--split">
+                        <input id="cfgRutaNueva" type="text" placeholder="\\pps-nas\Reportes\Input\Ventas" />
+                        <button type="button" id="btnCfgAgregarRuta" class="btn btn--primary btn--inline">Agregar</button>
+                      </div>
+                      <small class="hint">Verificar que la ruta exista</small>
+                    </div>
+                  </div>
+                </section>
+              </div>
+
+              <div class="table-wrap">
+                <table class="table table-compact" id="tablaCfgRutas">
+                  <thead>
+                    <tr>
+                      <th style="width: 80px;">ID</th>
+                      <th>Ruta base</th>
+                      <th style="width: 120px;">Estado</th>
+                      <th style="width: 260px;">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody id="cfgTbodyRutas">
+                    <tr><td colspan="4" class="table-empty">Guarda el reporte para administrar rutas.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
 
             <div class="configurator-actions">
               <button type="button" id="btnCfgGoToEquipos" class="btn btn--ghost btn--inline" hidden>Continuar con equipos</button>
@@ -1130,8 +1276,14 @@
             </select>
           </div>
 
-          <div class="field">
+          <div class="nueva-solicitud-mode">
+            <span id="nuevaSolicitudModeBadge" class="badge badge--neutral">Modo pendiente</span>
+            <small id="nuevaSolicitudModeHelp" class="hint">Selecciona un reporte para detectar el flujo disponible.</small>
+          </div>
+
+          <div id="nuevaSolicitudLegacySection" class="field">
             <label for="ruta_input_select">Archivo de entrada</label>
+            <small id="hintRutaInput" class="hint">Este reporte podría requerir archivo de entrada.</small>
             <div class="input-group">
               <select id="ruta_input_select">
                 <option value="">-- Seleccionar --</option>
@@ -1144,6 +1296,22 @@
               </button>
             </div>
             <small id="archivos_help" class="hint">Opcional según reporte</small>
+          </div>
+
+          <div id="nuevaSolicitudInputsSection" class="field nueva-inputs-section" hidden>
+            <div class="nueva-inputs-section__header">
+              <div>
+                <label>Inputs requeridos del reporte</label>
+                <small id="nuevaSolicitudInputsHelp" class="hint">Los inputs definidos se cargan dinámicamente para este reporte.</small>
+              </div>
+              <span id="nuevaSolicitudInputsStatus" class="badge badge--neutral">Sin cargar</span>
+            </div>
+            <div id="nuevaSolicitudInputsContainer" class="nueva-inputs-grid">
+              <div class="result-empty">Selecciona un reporte para cargar sus inputs.</div>
+            </div>
+            <div id="nuevaSolicitudInputsSummary" class="nueva-inputs-summary">
+              <div class="result-empty">Aún no hay valores seleccionados.</div>
+            </div>
           </div>
 
           <div class="field">

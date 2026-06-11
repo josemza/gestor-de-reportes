@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import shlex
+import shutil
 import subprocess
 import time
 from dataclasses import dataclass
@@ -20,18 +21,18 @@ from sqlalchemy.orm import Session
 # Cargar .env antes de importar settings
 load_dotenv()
 
-from app.config import settings
+from app.config import ensure_directory, resolve_project_path, settings
 from app.db import SessionLocal, engine
 from app import crud
-from app.models import Solicitud, Reporte, ReporteLock
+from app.models import Solicitud, Reporte, ReporteLock, SolicitudInputValor
 
 
 # ----------------------------
 # Logging del worker
 # ----------------------------
 def setup_logger() -> logging.Logger:
-    log_dir = Path(settings.WORKER_LOG_DIR)
-    log_dir.mkdir(parents=True, exist_ok=True)
+    log_dir = ensure_directory(settings.WORKER_LOG_DIR, label="WORKER_LOG_DIR")
+    ensure_directory(settings.WORKER_PAYLOAD_DIR, label="WORKER_PAYLOAD_DIR")
 
     logger = logging.getLogger("worker")
     logger.setLevel(logging.INFO)
@@ -78,6 +79,9 @@ def resolve_worker_id() -> str:
     return f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:6]}"
 
 
+WORKER_ID = resolve_worker_id()
+
+
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -113,27 +117,88 @@ def safe_json_loads(raw: str | None) -> dict[str, Any]:
         return {}
 
 
-def build_command(
+def strict_json_loads(raw: str | None, field_name: str) -> dict[str, Any]:
+    if not raw:
+        return {}
+    try:
+        val = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"{field_name} inválido: {e.msg}") from e
+    if not isinstance(val, dict):
+        raise RuntimeError(f"{field_name} debe ser un objeto JSON")
+    return val
+
+
+def detect_request_mode(input_rows: list[SolicitudInputValor]) -> str:
+    return "multi_input" if input_rows else "legacy"
+
+
+def _build_base_command_path(reporte: Reporte) -> str:
+    if not reporte.comando or not reporte.comando.strip():
+        raise RuntimeError("El reporte no tiene comando configurado.")
+
+    cmd_path = reporte.comando.strip()
+    _validate_command_target(cmd_path)
+    return f'"{cmd_path}"' if " " in cmd_path and not cmd_path.startswith('"') else cmd_path
+
+
+def _validate_command_target(command_text: str) -> None:
+    raw = (command_text or "").strip().strip('"')
+    if not raw:
+        raise RuntimeError("El reporte no tiene comando configurado.")
+
+    looks_like_file_target = raw.lower().endswith((".bat", ".cmd", ".exe", ".ps1"))
+    has_path_separator = "\\" in raw or "/" in raw
+    if not looks_like_file_target and not has_path_separator:
+        return
+
+    if not has_path_separator:
+        resolved_from_path = shutil.which(raw)
+        if resolved_from_path:
+            return
+
+    candidate = Path(raw).expanduser()
+    if not candidate.is_absolute():
+        candidate = resolve_project_path(raw)
+
+    if not candidate.exists():
+        raise RuntimeError(f"El comando configurado no existe o no es accesible: {raw}")
+    if not candidate.is_file():
+        raise RuntimeError(f"El comando configurado no corresponde a un archivo ejecutable: {raw}")
+
+
+def _validate_existing_input_file(path_value: str, *, label: str) -> None:
+    raw = (path_value or "").strip()
+    if not raw:
+        raise RuntimeError(f"El archivo input {label} no fue informado")
+
+    path_obj = Path(raw)
+    try:
+        exists = path_obj.exists()
+    except OSError as e:
+        raise RuntimeError(f"El archivo input {label} no es accesible: {raw} ({e})") from e
+    if not exists:
+        raise RuntimeError(f"El archivo input {label} no existe o fue eliminado antes de la ejecución: {raw}")
+
+    try:
+        is_file = path_obj.is_file()
+    except OSError as e:
+        raise RuntimeError(f"No se pudo validar el archivo input {label}: {raw} ({e})") from e
+    if not is_file:
+        raise RuntimeError(f"La ruta del input {label} no corresponde a un archivo: {raw}")
+
+
+def build_legacy_command(
     reporte: Reporte,
     solicitud: Solicitud,
 ) -> str | list[str]:
     """
-    Construye el comando final a ejecutar.
-    Convención propuesta:
-      - reporte.comando contiene la ruta al .bat (o comando base).
-      - se agregan args estándar para trazabilidad.
-      - si necesitas args custom, usa parametros_json.
+    Mantiene el contrato legacy:
+      reporte.bat --request_id ... --usuario ... --ruta_input ... --clave valor
     """
-    if not reporte.comando or not reporte.comando.strip():
-        raise RuntimeError("El reporte no tiene comando configurado.")
-
-    # Aseguramos comillas por si la ruta tiene espacios (ej: "C:\Archivos de Programa\run.bat")
-    cmd_path = reporte.comando.strip()
-    base_cmd = f'"{cmd_path}"' if " " in cmd_path and not cmd_path.startswith('"') else cmd_path
+    base_cmd = _build_base_command_path(reporte)
     params = safe_json_loads(solicitud.parametros_json)
 
-    # Args estándar (puedes adaptarlos a tu .bat)
-    # Nota: en shell=True conviene construir string bien escapado para Windows.
     request_id = solicitud.request_id
     ruta_input = solicitud.ruta_input or ""
     usuario = solicitud.usuario
@@ -159,7 +224,78 @@ def build_command(
     if settings.WORKER_USE_SHELL:
         return cmd_str
 
-    # Si algún día usas shell=False, retornamos lista tokenizada
+    return shlex.split(cmd_str, posix=False)
+
+
+def build_multi_input_payload_content(
+    reporte: Reporte,
+    solicitud: Solicitud,
+    input_rows: list[SolicitudInputValor],
+) -> dict[str, Any]:
+    parametros = strict_json_loads(solicitud.parametros_json, "parametros_json")
+    inputs_payload: dict[str, Any] = {}
+
+    for row in input_rows:
+        metadata = strict_json_loads(row.metadata_json, f"metadata_json de {row.codigo_input}")
+        value = row.ruta_archivo if row.tipo_input == "archivo" else row.valor
+        inputs_payload[row.codigo_input] = {
+            "tipo": row.tipo_input,
+            "valor": value,
+            "ruta_archivo": row.ruta_archivo,
+            "metadata": metadata,
+        }
+
+    generated_at = now_utc().replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return {
+        "request_id": solicitud.request_id,
+        "solicitud_id": solicitud.id,
+        "reporte_codigo": reporte.codigo,
+        "usuario": solicitud.usuario,
+        "modo_inputs": "multi_input",
+        "inputs": inputs_payload,
+        "parametros": parametros,
+        "metadata": {
+            "ruta_output_base": reporte.ruta_output_base.strip() if reporte.ruta_output_base else None,
+            "generated_at_utc": generated_at,
+        },
+    }
+
+
+def write_multi_input_payload_file(
+    solicitud: Solicitud,
+    intento_actual: int,
+    payload: dict[str, Any],
+) -> str:
+    payload_dir = ensure_directory(settings.WORKER_PAYLOAD_DIR, label="WORKER_PAYLOAD_DIR")
+    payload_path = payload_dir / f"{solicitud.request_id}__try_{intento_actual}.json"
+    try:
+        with open(payload_path, "w", encoding="utf-8", errors="replace") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+    except OSError as e:
+        raise RuntimeError(f"No se pudo escribir el payload JSON temporal en {payload_path}: {e}") from e
+    return str(payload_path)
+
+
+def build_multi_input_command(
+    reporte: Reporte,
+    solicitud: Solicitud,
+    payload_path: str,
+) -> str | list[str]:
+    """
+    Contrato multi-input:
+      reporte.bat --request_id ... --usuario ... --params "<json_path>"
+    """
+    base_cmd = _build_base_command_path(reporte)
+    std_args = [
+        f'--request_id "{solicitud.request_id}"',
+        f'--usuario "{solicitud.usuario}"',
+        f'--params "{payload_path}"',
+    ]
+    cmd_str = " ".join([base_cmd] + std_args)
+
+    if settings.WORKER_USE_SHELL:
+        return cmd_str
+
     return shlex.split(cmd_str, posix=False)
 
 
@@ -168,15 +304,29 @@ def write_request_log(
     command_repr: str,
     result: RunResult | None = None,
     error: str | None = None,
+    context: dict[str, Any] | None = None,
 ) -> str:
-    log_dir = Path(settings.WORKER_LOG_DIR)
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / f"{request_id}.log"
+    log_dir = ensure_directory(settings.WORKER_LOG_DIR, label="WORKER_LOG_DIR")
+    attempt_number = None
+    if context:
+        raw_attempt = context.get("attempt_number")
+        try:
+            attempt_number = int(raw_attempt) if raw_attempt is not None else None
+        except (TypeError, ValueError):
+            attempt_number = None
+
+    if attempt_number and attempt_number >= 1:
+        log_path = log_dir / f"{request_id}__try_{attempt_number}.log"
+    else:
+        log_path = log_dir / f"{request_id}.log"
 
     lines: list[str] = []
     lines.append(f"request_id={request_id}")
     lines.append(f"timestamp_utc={now_utc().isoformat()}Z")
     lines.append(f"command={command_repr}")
+    if context:
+        for key, value in context.items():
+            lines.append(f"{key}={value}")
 
     if result is not None:
         lines.append(f"duration_sec={result.duration_sec:.3f}")
@@ -194,8 +344,11 @@ def write_request_log(
         lines.append("=== WORKER_ERROR ===")
         lines.append(error)
 
-    with open(log_path, "w", encoding="utf-8", errors="replace") as f:
-        f.write("\n".join(lines))
+    try:
+        with open(log_path, "w", encoding="utf-8", errors="replace") as f:
+            f.write("\n".join(lines))
+    except OSError as e:
+        raise RuntimeError(f"No se pudo escribir el log del request {request_id} en {log_path}: {e}") from e
 
     return str(log_path)
 
@@ -265,6 +418,11 @@ def update_progress(db: Session, solicitud_id: int, progreso: int, msg: str):
         Solicitud.mensaje_estado: msg,
         Solicitud.updated_at: now_utc(),
     })
+    db.commit()
+
+
+def record_worker_event(db: Session, solicitud_id: int, tipo: str, detalle: str):
+    crud.add_evento(db, solicitud_id, tipo, detalle, "WORKER")
     db.commit()
 
 
@@ -351,6 +509,10 @@ def resolve_output_path_from_reporte(reporte: Reporte) -> str | None:
     return None
 
 
+def current_attempt_number(solicitud: Solicitud) -> int:
+    return max(1, (solicitud.intentos or 0) + 1)
+
+
 def heartbeat_lock(reporte_id: int, solicitud_id: int):
     hb_db = SessionLocal()
     try:
@@ -358,7 +520,7 @@ def heartbeat_lock(reporte_id: int, solicitud_id: int):
             db=hb_db,
             reporte_id=reporte_id,
             solicitud_id=solicitud_id,
-            worker_id=resolve_worker_id(),
+            worker_id=WORKER_ID,
         )
         if ok:
             hb_db.commit()
@@ -368,7 +530,7 @@ def heartbeat_lock(reporte_id: int, solicitud_id: int):
                 "Heartbeat de lock ignorado | reporte_id=%s | solicitud_id=%s | worker_id=%s",
                 reporte_id,
                 solicitud_id,
-                resolve_worker_id(),
+                WORKER_ID,
             )
     except Exception:
         hb_db.rollback()
@@ -388,7 +550,7 @@ def release_lock(reporte_id: int, solicitud_id: int):
             db=lock_db,
             reporte_id=reporte_id,
             solicitud_id=solicitud_id,
-            worker_id=resolve_worker_id(),
+            worker_id=WORKER_ID,
         )
         if released:
             lock_db.commit()
@@ -411,19 +573,77 @@ def release_lock(reporte_id: int, solicitud_id: int):
 
 
 def process_job(db: Session, job: Solicitud):
+    mode = "legacy"
+    payload_path: str | None = None
+    input_count = 0
+    intento_actual = current_attempt_number(job)
     try:
         reporte = db.get(Reporte, job.reporte_id)
         if not reporte:
             err = "Reporte asociado no existe."
-            log_path = write_request_log(job.request_id, command_repr="N/A", error=err)
+            log_path = write_request_log(job.request_id, command_repr="N/A", error=err, context={"attempt_number": intento_actual})
             mark_error_or_retry(db, job, log_path=log_path, error_msg=err)
             return
 
-        update_progress(db, job.id, 20, "Preparando ejecución...")
-        command = build_command(reporte, job)
-        command_repr = command if isinstance(command, str) else " ".join(command)
+        input_rows = crud.get_solicitud_input_valores(db, job.id)
+        mode = detect_request_mode(input_rows)
+        input_count = len(input_rows)
+        if job.estado == "PENDIENTE_ADAPTACION_WORKER" and mode != "multi_input":
+            raise RuntimeError(
+                "La solicitud estaba en PENDIENTE_ADAPTACION_WORKER pero no tiene valores persistidos en SOLICITUD_INPUT_VALOR_REP_GCI"
+            )
 
-        logger.info("Ejecutando %s | request_id=%s | cmd=%s", reporte.codigo, job.request_id, command_repr)
+        record_worker_event(
+            db,
+            job.id,
+            "INTENTO",
+            f"Intento {intento_actual} iniciado | modo={mode} | inputs={input_count}",
+        )
+        update_progress(db, job.id, 20, "Preparando ejecución...")
+        if mode == "multi_input":
+            for row in input_rows:
+                if row.tipo_input == "archivo":
+                    _validate_existing_input_file(row.ruta_archivo or "", label=row.codigo_input)
+        elif job.ruta_input:
+            _validate_existing_input_file(job.ruta_input, label="legacy")
+
+        if mode == "multi_input":
+            payload_content = build_multi_input_payload_content(reporte, job, input_rows)
+            payload_path = write_multi_input_payload_file(job, intento_actual, payload_content)
+            record_worker_event(
+                db,
+                job.id,
+                "PAYLOAD",
+                f"Payload temporal generado para intento {intento_actual}",
+            )
+            command = build_multi_input_command(reporte, job, payload_path)
+        else:
+            command = build_legacy_command(reporte, job)
+
+        command_repr = command if isinstance(command, str) else " ".join(command)
+        log_context = {
+            "mode": mode,
+            "input_count": input_count,
+            "attempt_number": intento_actual,
+        }
+        if payload_path:
+            log_context["payload_path"] = payload_path
+
+        logger.info(
+            "Ejecutando %s | request_id=%s | mode=%s | input_count=%s | payload_path=%s | cmd=%s",
+            reporte.codigo,
+            job.request_id,
+            mode,
+            input_count,
+            payload_path or "N/A",
+            command_repr,
+        )
+        record_worker_event(
+            db,
+            job.id,
+            "EJECUCION",
+            f"Comando invocado por worker para intento {intento_actual}",
+        )
         update_progress(db, job.id, 40, "Ejecutando proceso...")
 
         result = run_command(
@@ -439,6 +659,13 @@ def process_job(db: Session, job: Solicitud):
             request_id=job.request_id,
             command_repr=command_repr,
             result=result,
+            context=log_context,
+        )
+        record_worker_event(
+            db,
+            job.id,
+            "RESULTADO",
+            f"Intento {intento_actual} finalizado | returncode={result.returncode} | timed_out={result.timed_out}",
         )
 
         if result.returncode == 0 and not result.timed_out:
@@ -463,7 +690,14 @@ def process_job(db: Session, job: Solicitud):
         # error inesperado del worker
         err = f"Excepción no controlada: {type(ex).__name__}: {ex}"
         logger.exception("Error no controlado en request_id=%s", job.request_id)
-        log_path = write_request_log(job.request_id, command_repr="N/A", error=err)
+        context = {
+            "mode": mode,
+            "input_count": input_count,
+            "attempt_number": intento_actual,
+        }
+        if payload_path:
+            context["payload_path"] = payload_path
+        log_path = write_request_log(job.request_id, command_repr="N/A", error=err, context=context)
         mark_error_or_retry(db, job, log_path=log_path, error_msg=err)
     finally:
         release_lock(job.reporte_id, job.id)
@@ -472,14 +706,16 @@ def process_job(db: Session, job: Solicitud):
 def main():
     ensure_lock_table()
     logger.info(
-        "Worker iniciado | id=%s | poll=%ss | horario=%02d:00-%02d:00 | timezone=%s",
-        resolve_worker_id(),
+        "Worker iniciado | id=%s | poll=%ss | horario=%02d:00-%02d:00 | timezone=%s | payload_dir=%s",
+        WORKER_ID,
         settings.WORKER_POLL_SECONDS,
         settings.WORKER_ACTIVE_START_HOUR,
         settings.WORKER_ACTIVE_END_HOUR,
         settings.WORKER_TIMEZONE,
+        settings.WORKER_PAYLOAD_DIR,
     )
-    Path(settings.WORKER_LOG_DIR).mkdir(parents=True, exist_ok=True)
+    ensure_directory(settings.WORKER_LOG_DIR, label="WORKER_LOG_DIR")
+    ensure_directory(settings.WORKER_PAYLOAD_DIR, label="WORKER_PAYLOAD_DIR")
     in_schedule_prev: bool | None = None
 
     while True:
@@ -502,7 +738,7 @@ def main():
         try:
             job = crud.take_next_job_atomically(
                 db,
-                resolve_worker_id(),
+                WORKER_ID,
                 lock_stale_seconds=settings.WORKER_LOCK_STALE_SECONDS,
             )
             if job:

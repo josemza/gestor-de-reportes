@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone, date
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 from fastapi import FastAPI, Depends, HTTPException, Query, Request
@@ -12,15 +13,22 @@ from sqlalchemy.exc import NoSuchTableError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.sqltypes import String, Text, Date, DateTime, Integer, Numeric, Float, Boolean
 
-from .config import settings
+from .config import ensure_directory, resolve_project_path, settings
 from .db import get_db
 from .deps_auth import require_admin_rutas, get_current_user
 from . import crud
 from .schemas import (
+    ArchivoInputDisponibleOut,
     HealthOut,
+    ReporteInputsOut,
+    ReporteInputArchivosOut,
     ReporteOut,
     ReporteCreate,
     SolicitudCreate,
+    SolicitudCreateV2,
+    SolicitudDetalleOut,
+    SolicitudIntentoOut,
+    SolicitudInputValorOut,
     SolicitudOut,
     SolicitudPageOut,
     EventoOut,
@@ -32,10 +40,16 @@ from .schemas_admin import (
     CarpetaPermitidaCreate,
     CarpetaPermitidaOut,
     CarpetaPermitidaUpdate,
+    InputCarpetaPermitidaCreate,
+    InputCarpetaPermitidaOut,
+    InputCarpetaPermitidaUpdate,
     ReporteAdminCreate,
     ReporteAdminOut,
     ReporteAdminPageOut,
     ReporteAdminUpdate,
+    ReporteInputDefCreate,
+    ReporteInputDefOut,
+    ReporteInputDefUpdate,
     EquipoCreate,
     EquipoUpdate,
     EquipoOut,
@@ -52,11 +66,14 @@ from .schemas_admin import (
 from .schemas_auth import UserCreateIn, UserCreateOut, UserOut, UserPasswordResetOut
 from .init_db import init_db
 from .models import (
+    InputCarpetaPermitida,
     Solicitud,
+    SolicitudInputValor,
     SolicitudEvento,
     Reporte,
     ReporteCarpetaPermitida,
     ReporteEquipo,
+    ReporteInputDef,
     TablaConsultaPermitida,
     TablaConsultaEquipo,
 )
@@ -68,6 +85,8 @@ from .routers.auth import router as auth_router
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # STARTUP
+    ensure_directory(settings.WORKER_LOG_DIR, label="WORKER_LOG_DIR")
+    ensure_directory(settings.WORKER_PAYLOAD_DIR, label="WORKER_PAYLOAD_DIR")
     init_db()
     yield
     # SHUTDOWN
@@ -136,6 +155,55 @@ def _normalize_json_example(raw: str | None) -> str | None:
     return json.dumps(parsed, ensure_ascii=False, indent=2)
 
 
+def _normalize_extensiones_input(raw: str | None) -> str | None:
+    if raw is None:
+        return None
+
+    txt = raw.strip().lower()
+    if not txt:
+        return None
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for part in re.split(r"[;,]", txt):
+        ext = part.strip().lstrip(".")
+        if not ext:
+            continue
+        if not re.fullmatch(r"[a-z0-9]+", ext):
+            raise HTTPException(status_code=422, detail="tipos_permitidos contiene extensiones inválidas")
+        if ext not in seen:
+            normalized.append(ext)
+            seen.add(ext)
+
+    return ";".join(normalized) if normalized else None
+
+
+def _get_reporte_or_404(db: Session, reporte_id: int) -> Reporte:
+    row = db.get(Reporte, reporte_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Reporte no existe")
+    return row
+
+
+def _get_input_def_or_404(db: Session, input_id: int) -> ReporteInputDef:
+    row = db.get(ReporteInputDef, input_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Input del reporte no existe")
+    return row
+
+
+def _get_input_carpeta_or_404(db: Session, carpeta_id: int) -> InputCarpetaPermitida:
+    row = db.get(InputCarpetaPermitida, carpeta_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Carpeta permitida del input no existe")
+    return row
+
+
+def _require_input_tipo_archivo(input_def: ReporteInputDef) -> None:
+    if input_def.tipo_input != "archivo":
+        raise HTTPException(status_code=400, detail="La operación solo aplica a inputs de tipo archivo")
+
+
 def _parse_table_identifier(raw: str) -> tuple[str | None, str]:
     """
     Admite identificadores en formato:
@@ -184,6 +252,352 @@ def _column_key(name: str) -> str:
 
 def _is_admin_user(current_user: dict[str, Any]) -> bool:
     return "ADMIN" in current_user["roles"] or current_user["username"] == "admin"
+
+
+def _user_has_reporte_access(db: Session, reporte_id: int, current_user: dict[str, Any]) -> bool:
+    if _is_admin_user(current_user):
+        return True
+
+    allowed = db.execute(
+        select(ReporteEquipo.id)
+        .join(UsuarioEquipo, UsuarioEquipo.equipo_id == ReporteEquipo.equipo_id)
+        .join(Equipo, Equipo.id == ReporteEquipo.equipo_id)
+        .where(
+            ReporteEquipo.reporte_id == reporte_id,
+            Equipo.activo == 1,
+            ReporteEquipo.activo == 1,
+            UsuarioEquipo.usuario_id == current_user["id"],
+            UsuarioEquipo.activo == 1,
+        )
+    ).first()
+    return allowed is not None
+
+
+def _require_reporte_access(db: Session, reporte: Reporte, current_user: dict[str, Any]) -> None:
+    if not _user_has_reporte_access(db, reporte.id, current_user):
+        raise HTTPException(status_code=403, detail="No tienes acceso a este reporte por equipo")
+
+
+def _require_solicitud_access(solicitud: Solicitud, current_user: dict[str, Any], detail: str) -> None:
+    if _is_admin_user(current_user):
+        return
+    if current_user["username"] != solicitud.usuario:
+        raise HTTPException(status_code=403, detail=detail)
+
+
+def _parse_json_object(raw: str | None) -> dict[str, Any]:
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _build_solicitud_out(s: Solicitud, rep: Reporte | None, fallback_codigo: str) -> SolicitudOut:
+    return SolicitudOut(
+        request_id=s.request_id,
+        reporte_codigo=rep.codigo if rep else fallback_codigo,
+        usuario=s.usuario,
+        estado=s.estado,
+        progreso=s.progreso,
+        mensaje_estado=s.mensaje_estado,
+        ruta_output=s.ruta_output or (rep.ruta_output_base if rep else None),
+        error_detalle=s.error_detalle,
+        fecha_solicitud=s.fecha_solicitud,
+        fecha_inicio=s.fecha_inicio,
+        fecha_fin=s.fecha_fin,
+        updated_at=s.updated_at,
+    )
+
+
+def _build_solicitud_input_out_rows(
+    db: Session,
+    input_rows: list[SolicitudInputValor],
+) -> list[SolicitudInputValorOut]:
+    if not input_rows:
+        return []
+
+    input_def_ids = sorted({row.input_def_id for row in input_rows})
+    defs = db.execute(
+        select(ReporteInputDef).where(ReporteInputDef.id.in_(input_def_ids))
+    ).scalars().all()
+    defs_by_id = {row.id: row for row in defs}
+
+    out: list[SolicitudInputValorOut] = []
+    for row in input_rows:
+        input_def = defs_by_id.get(row.input_def_id)
+        metadata = _parse_json_object(row.metadata_json)
+        out.append(
+            SolicitudInputValorOut(
+                codigo_input=row.codigo_input,
+                nombre_visible=input_def.nombre_visible if input_def else row.codigo_input,
+                tipo_input=row.tipo_input,
+                obligatorio=input_def.obligatorio if input_def else 0,
+                valor=row.valor,
+                ruta_archivo=row.ruta_archivo,
+                metadata=metadata or None,
+            )
+        )
+    return out
+
+
+def _resolve_runtime_dir(raw_dir: str) -> Path:
+    return resolve_project_path(raw_dir)
+
+
+def _display_runtime_path(path: Path | None) -> str | None:
+    if not path:
+        return None
+    try:
+        return str(path.resolve().relative_to(BASE_DIR.parent.resolve()))
+    except ValueError:
+        return str(path.resolve())
+
+
+def _safe_int(raw: str | None) -> int | None:
+    if raw is None or raw == "":
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_float(raw: str | None) -> float | None:
+    if raw is None or raw == "":
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_bool(raw: str | None) -> bool | None:
+    if raw is None:
+        return None
+    normalized = str(raw).strip().lower()
+    if normalized in {"true", "1", "yes", "si"}:
+        return True
+    if normalized in {"false", "0", "no"}:
+        return False
+    return None
+
+
+def _tail_text(raw: str | None, max_lines: int = 18, max_chars: int = 1600) -> str | None:
+    if not raw:
+        return None
+    lines = [line.rstrip() for line in str(raw).splitlines()]
+    if len(lines) > max_lines:
+        lines = lines[-max_lines:]
+    text = "\n".join(lines).strip()
+    if len(text) > max_chars:
+        text = f"...{text[-max_chars:]}"
+    return text or None
+
+
+def _parse_request_log_file(path: Path) -> dict[str, Any]:
+    meta: dict[str, str] = {}
+    stdout_lines: list[str] = []
+    stderr_lines: list[str] = []
+    worker_error_lines: list[str] = []
+    section: str | None = None
+
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return {}
+
+    for line in lines:
+        if line == "=== STDOUT ===":
+            section = "stdout"
+            continue
+        if line == "=== STDERR ===":
+            section = "stderr"
+            continue
+        if line == "=== WORKER_ERROR ===":
+            section = "worker_error"
+            continue
+
+        if section == "stdout":
+            stdout_lines.append(line)
+            continue
+        if section == "stderr":
+            stderr_lines.append(line)
+            continue
+        if section == "worker_error":
+            worker_error_lines.append(line)
+            continue
+
+        if "=" in line:
+            key, value = line.split("=", 1)
+            meta[key.strip()] = value.strip()
+
+    return {
+        "meta": meta,
+        "stdout": "\n".join(stdout_lines).strip(),
+        "stderr": "\n".join(stderr_lines).strip(),
+        "worker_error": "\n".join(worker_error_lines).strip(),
+    }
+
+
+def _collect_request_attempt_artifacts(
+    request_id: str,
+    include_sensitive: bool,
+) -> list[SolicitudIntentoOut]:
+    pattern = re.compile(rf"^{re.escape(request_id)}(?:__try_(\d+))?\.log$", re.IGNORECASE)
+    log_dir = _resolve_runtime_dir(settings.WORKER_LOG_DIR)
+    payload_dir = _resolve_runtime_dir(settings.WORKER_PAYLOAD_DIR)
+
+    logs_by_attempt: dict[int, Path] = {}
+    if log_dir.exists():
+        for path in log_dir.iterdir():
+            if not path.is_file():
+                continue
+            match = pattern.fullmatch(path.name)
+            if not match:
+                continue
+            attempt = int(match.group(1) or 1)
+            current = logs_by_attempt.get(attempt)
+            if current is None or "__try_" in path.name:
+                logs_by_attempt[attempt] = path
+
+    payload_pattern = re.compile(rf"^{re.escape(request_id)}(?:__try_(\d+))?\.json$", re.IGNORECASE)
+    payloads_by_attempt: dict[int, Path] = {}
+    if payload_dir.exists():
+        for path in payload_dir.iterdir():
+            if not path.is_file():
+                continue
+            match = payload_pattern.fullmatch(path.name)
+            if not match:
+                continue
+            attempt = int(match.group(1) or 1)
+            current = payloads_by_attempt.get(attempt)
+            if current is None or "__try_" in path.name:
+                payloads_by_attempt[attempt] = path
+
+    attempts: list[SolicitudIntentoOut] = []
+    for attempt in sorted(set(logs_by_attempt) | set(payloads_by_attempt)):
+        log_path = logs_by_attempt.get(attempt)
+        parsed = _parse_request_log_file(log_path) if log_path else {}
+        meta = parsed.get("meta", {})
+
+        payload_path = payloads_by_attempt.get(attempt)
+        payload_path_raw = meta.get("payload_path")
+        if payload_path is None and payload_path_raw:
+            candidate = Path(payload_path_raw)
+            if not candidate.is_absolute():
+                candidate = (BASE_DIR.parent / candidate).resolve()
+            try:
+                if candidate.is_file() and candidate.resolve().is_relative_to(payload_dir):
+                    payload_path = candidate
+            except ValueError:
+                payload_path = None
+
+        payload_preview: dict[str, Any] | None = None
+        if include_sensitive and payload_path and payload_path.is_file():
+            try:
+                parsed_payload = json.loads(payload_path.read_text(encoding="utf-8", errors="replace"))
+                if isinstance(parsed_payload, dict):
+                    payload_preview = parsed_payload
+            except (OSError, json.JSONDecodeError):
+                payload_preview = None
+
+        returncode = _safe_int(meta.get("returncode"))
+        timed_out = _safe_bool(meta.get("timed_out"))
+        worker_error = parsed.get("worker_error") or None
+        if worker_error:
+            estado_resultado = "worker_error"
+        elif returncode == 0 and timed_out is not True:
+            estado_resultado = "ok"
+        elif returncode is not None or timed_out:
+            estado_resultado = "error"
+        else:
+            estado_resultado = "sin_resultado"
+
+        attempts.append(
+            SolicitudIntentoOut(
+                intento=attempt,
+                modo_inputs=meta.get("mode"),
+                input_count=_safe_int(meta.get("input_count")),
+                estado_resultado=estado_resultado,
+                log_path=_display_runtime_path(log_path) if include_sensitive else None,
+                payload_path=_display_runtime_path(payload_path) if include_sensitive else None,
+                comando=meta.get("command") if include_sensitive else None,
+                duration_sec=_safe_float(meta.get("duration_sec")),
+                timed_out=timed_out,
+                returncode=returncode,
+                stdout_tail=_tail_text(parsed.get("stdout")) if include_sensitive else None,
+                stderr_tail=_tail_text(parsed.get("stderr")) if include_sensitive else None,
+                worker_error=worker_error if include_sensitive else None,
+                payload_preview=payload_preview,
+            )
+        )
+
+    return attempts
+
+
+def _get_reporte_carpetas_activas(db: Session, reporte_id: int) -> list[ReporteCarpetaPermitida]:
+    return db.execute(
+        select(ReporteCarpetaPermitida).where(
+            ReporteCarpetaPermitida.reporte_id == reporte_id,
+            ReporteCarpetaPermitida.activo == 1,
+        )
+    ).scalars().all()
+
+
+def _validate_legacy_ruta_input(
+    db: Session,
+    rep: Reporte,
+    ruta_input: str | None,
+) -> str | None:
+    ruta = (ruta_input or "").strip()
+    if not ruta:
+        return None
+
+    allowed = {x.strip().lower() for x in (rep.tipos_permitidos or "").split(";") if x.strip()}
+    if not allowed:
+        allowed = {"csv", "xlsx"}
+
+    ext = Path(ruta).suffix.lower().lstrip(".")
+    if ext not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Extensión no permitida para ruta_input: .{ext or '?'}. Permitidas: {sorted(allowed)}",
+        )
+
+    carpetas = _get_reporte_carpetas_activas(db, rep.id)
+    if not carpetas:
+        raise HTTPException(
+            status_code=400,
+            detail="El reporte no tiene carpetas permitidas activas para validar ruta_input",
+        )
+
+    if not any(crud.is_path_under_base(ruta, carpeta.ruta_base) for carpeta in carpetas):
+        raise HTTPException(
+            status_code=400,
+            detail="La ruta_input enviada no pertenece a una carpeta permitida activa del reporte",
+        )
+
+    path_obj = Path(ruta)
+    try:
+        exists_at_validation = path_obj.exists()
+    except OSError:
+        exists_at_validation = False
+
+    if not exists_at_validation:
+        raise HTTPException(status_code=400, detail="La ruta_input enviada no existe o no es accesible")
+
+    try:
+        is_file = path_obj.is_file()
+    except OSError:
+        is_file = False
+
+    if not is_file:
+        raise HTTPException(status_code=400, detail="La ruta_input enviada no corresponde a un archivo")
+
+    return ruta
 
 
 def _serialize_user_out(db: Session, user: Usuario) -> UserOut:
@@ -478,33 +892,263 @@ def delete_reporte_admin(
     return {"detail": "Reporte desactivado correctamente"}
 
 
+@app.get("/admin/reportes/{reporte_id}/inputs", response_model=list[ReporteInputDefOut], tags=["admin"])
+def list_reporte_inputs_admin(
+    reporte_id: int,
+    db: Session = Depends(get_db),
+    _user=Depends(require_admin_rutas),
+):
+    _get_reporte_or_404(db, reporte_id)
+    return db.execute(
+        select(ReporteInputDef)
+        .where(ReporteInputDef.reporte_id == reporte_id)
+        .order_by(ReporteInputDef.orden.asc(), ReporteInputDef.id.asc())
+    ).scalars().all()
+
+
+@app.post("/admin/reportes/{reporte_id}/inputs", response_model=ReporteInputDefOut, tags=["admin"])
+def create_reporte_input_admin(
+    reporte_id: int,
+    payload: ReporteInputDefCreate,
+    db: Session = Depends(get_db),
+    _user=Depends(require_admin_rutas),
+):
+    _get_reporte_or_404(db, reporte_id)
+
+    dup = db.execute(
+        select(ReporteInputDef).where(
+            ReporteInputDef.reporte_id == reporte_id,
+            ReporteInputDef.codigo_input == payload.codigo_input,
+        )
+    ).scalar_one_or_none()
+    if dup:
+        raise HTTPException(status_code=409, detail="Ya existe un input con ese codigo_input para este reporte")
+
+    now = datetime.now(timezone.utc)
+    row = ReporteInputDef(
+        reporte_id=reporte_id,
+        codigo_input=payload.codigo_input,
+        nombre_visible=payload.nombre_visible,
+        tipo_input=payload.tipo_input,
+        obligatorio=payload.obligatorio,
+        orden=payload.orden,
+        activo=payload.activo,
+        tipos_permitidos=_normalize_extensiones_input(payload.tipos_permitidos) if payload.tipo_input == "archivo" else None,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@app.patch("/admin/reportes/inputs/{input_id}", response_model=ReporteInputDefOut, tags=["admin"])
+def update_reporte_input_admin(
+    input_id: int,
+    payload: ReporteInputDefUpdate,
+    db: Session = Depends(get_db),
+    _user=Depends(require_admin_rutas),
+):
+    row = _get_input_def_or_404(db, input_id)
+    payload_fields = payload.model_fields_set
+
+    if payload.nombre_visible is not None:
+        row.nombre_visible = payload.nombre_visible
+
+    if payload.tipo_input is not None:
+        row.tipo_input = payload.tipo_input
+        if payload.tipo_input != "archivo" and "tipos_permitidos" not in payload_fields:
+            row.tipos_permitidos = None
+
+    if payload.obligatorio is not None:
+        row.obligatorio = payload.obligatorio
+
+    if payload.orden is not None:
+        row.orden = payload.orden
+
+    if payload.activo is not None:
+        row.activo = payload.activo
+
+    if "tipos_permitidos" in payload_fields:
+        if row.tipo_input != "archivo":
+            row.tipos_permitidos = None
+        else:
+            row.tipos_permitidos = _normalize_extensiones_input(payload.tipos_permitidos)
+    elif row.tipo_input != "archivo":
+        row.tipos_permitidos = None
+
+    row.updated_at = datetime.now(timezone.utc)
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@app.delete("/admin/reportes/inputs/{input_id}", response_model=ReporteInputDefOut, tags=["admin"])
+def delete_reporte_input_admin(
+    input_id: int,
+    db: Session = Depends(get_db),
+    _user=Depends(require_admin_rutas),
+):
+    row = _get_input_def_or_404(db, input_id)
+    row.activo = 0
+    row.updated_at = datetime.now(timezone.utc)
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@app.get("/admin/reportes/inputs/{input_id}/carpetas", response_model=list[InputCarpetaPermitidaOut], tags=["admin"])
+def list_input_carpetas_admin(
+    input_id: int,
+    db: Session = Depends(get_db),
+    _user=Depends(require_admin_rutas),
+):
+    input_def = _get_input_def_or_404(db, input_id)
+    _require_input_tipo_archivo(input_def)
+    return db.execute(
+        select(InputCarpetaPermitida)
+        .where(InputCarpetaPermitida.input_def_id == input_id)
+        .order_by(InputCarpetaPermitida.id.asc())
+    ).scalars().all()
+
+
+@app.post("/admin/reportes/inputs/{input_id}/carpetas", response_model=InputCarpetaPermitidaOut, tags=["admin"])
+def create_input_carpeta_admin(
+    input_id: int,
+    payload: InputCarpetaPermitidaCreate,
+    db: Session = Depends(get_db),
+    _user=Depends(require_admin_rutas),
+):
+    input_def = _get_input_def_or_404(db, input_id)
+    _require_input_tipo_archivo(input_def)
+
+    dup = db.execute(
+        select(InputCarpetaPermitida).where(
+            InputCarpetaPermitida.input_def_id == input_id,
+            InputCarpetaPermitida.ruta_base == payload.ruta_base,
+        )
+    ).scalar_one_or_none()
+    if dup:
+        raise HTTPException(status_code=409, detail="La ruta ya está registrada para este input")
+
+    row = InputCarpetaPermitida(
+        input_def_id=input_id,
+        ruta_base=payload.ruta_base,
+        activo=1,
+        created_at=datetime.now(timezone.utc),
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@app.patch("/admin/reportes/inputs/carpetas/{carpeta_id}", response_model=InputCarpetaPermitidaOut, tags=["admin"])
+def update_input_carpeta_admin(
+    carpeta_id: int,
+    payload: InputCarpetaPermitidaUpdate,
+    db: Session = Depends(get_db),
+    _user=Depends(require_admin_rutas),
+):
+    row = _get_input_carpeta_or_404(db, carpeta_id)
+
+    if payload.ruta_base is not None:
+        dup = db.execute(
+            select(InputCarpetaPermitida).where(
+                InputCarpetaPermitida.input_def_id == row.input_def_id,
+                InputCarpetaPermitida.ruta_base == payload.ruta_base,
+                InputCarpetaPermitida.id != carpeta_id,
+            )
+        ).scalar_one_or_none()
+        if dup:
+            raise HTTPException(status_code=409, detail="La ruta ya está registrada para este input")
+        row.ruta_base = payload.ruta_base
+
+    if payload.activo is not None:
+        row.activo = payload.activo
+
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@app.get("/reportes/{codigo}/inputs", response_model=ReporteInputsOut, tags=["reportes"])
+def get_reporte_inputs(
+    codigo: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    rep = crud.get_reporte_by_codigo(db, codigo)
+    if not rep or rep.activo != 1:
+        raise HTTPException(status_code=404, detail="Reporte no existe o inactivo")
+
+    _require_reporte_access(db, rep, current_user)
+
+    input_defs = crud.get_reporte_input_defs(db, rep.id, only_active=False)
+    modo_inputs = "multi_input" if input_defs else "legacy"
+    visible_inputs = [row for row in input_defs if row.activo == 1] if modo_inputs == "multi_input" else []
+
+    return ReporteInputsOut(
+        reporte_codigo=rep.codigo,
+        modo_inputs=modo_inputs,
+        inputs=visible_inputs,
+    )
+
+
+@app.get("/reportes/{codigo}/inputs/{codigo_input}/archivos", response_model=ReporteInputArchivosOut, tags=["reportes"])
+def list_archivos_input_definido(
+    codigo: str,
+    codigo_input: str,
+    max_items: int = Query(200, ge=1, le=1000),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    rep = crud.get_reporte_by_codigo(db, codigo)
+    if not rep or rep.activo != 1:
+        raise HTTPException(status_code=404, detail="Reporte no existe o inactivo")
+
+    _require_reporte_access(db, rep, current_user)
+
+    input_defs = crud.get_reporte_input_defs(db, rep.id, only_active=False)
+    if not input_defs:
+        raise HTTPException(status_code=400, detail="El reporte opera en modo legacy y no expone inputs definidos")
+
+    input_def = crud.get_reporte_input_def_by_codigo(db, rep.id, codigo_input, only_active=False)
+    if not input_def:
+        raise HTTPException(status_code=404, detail="Input no existe para este reporte")
+    if input_def.activo != 1:
+        raise HTTPException(status_code=400, detail="El input solicitado está inactivo")
+    if input_def.tipo_input != "archivo":
+        raise HTTPException(status_code=400, detail="El input solicitado no es de tipo archivo")
+
+    archivos = crud.list_files_for_input(db, input_def, max_items=max_items)
+    return ReporteInputArchivosOut(
+        reporte_codigo=rep.codigo,
+        codigo_input=input_def.codigo_input,
+        archivos=[ArchivoInputDisponibleOut(**row) for row in archivos],
+    )
+
+
 @app.post("/solicitudes", response_model=SolicitudOut, tags=["solicitudes"])
 def create_solicitud(
     payload: SolicitudCreate,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    payload.usuario = current_user["username"]
     rep = crud.get_reporte_by_codigo(db, payload.reporte_codigo)
     if not rep or rep.activo != 1:
         raise HTTPException(status_code=404, detail="Reporte no existe o inactivo")
 
-    is_admin = "ADMIN" in current_user["roles"] or current_user["username"] == "admin"
-    if not is_admin:
-        allowed = db.execute(
-            select(ReporteEquipo.id)
-            .join(UsuarioEquipo, UsuarioEquipo.equipo_id == ReporteEquipo.equipo_id)
-            .join(Equipo, Equipo.id == ReporteEquipo.equipo_id)
-            .where(
-                ReporteEquipo.reporte_id == rep.id,
-                Equipo.activo == 1,
-                ReporteEquipo.activo == 1,
-                UsuarioEquipo.usuario_id == current_user["id"],
-                UsuarioEquipo.activo == 1,
-            )
-        ).first()
-        if not allowed:
-            raise HTTPException(status_code=403, detail="No tienes acceso a este reporte por equipo")
+    _require_reporte_access(db, rep, current_user)
+    ruta_input = _validate_legacy_ruta_input(db, rep, payload.ruta_input)
+    payload = payload.model_copy(update={
+        "usuario": current_user["username"],
+        "ruta_input": ruta_input,
+    })
 
     try:
         s = crud.create_solicitud(db, payload)
@@ -512,42 +1156,103 @@ def create_solicitud(
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     rep = db.get(Reporte, s.reporte_id)
-    return SolicitudOut(
-        request_id=s.request_id,
-        reporte_codigo=rep.codigo if rep else payload.reporte_codigo,
-        usuario=s.usuario,
-        estado=s.estado,
-        progreso=s.progreso,
-        mensaje_estado=s.mensaje_estado,
-        ruta_output=s.ruta_output or (rep.ruta_output_base if rep else None),
-        error_detalle=s.error_detalle,
-        fecha_solicitud=s.fecha_solicitud,
-        fecha_inicio=s.fecha_inicio,
-        fecha_fin=s.fecha_fin,
-        updated_at=s.updated_at,
-    )
+    return _build_solicitud_out(s, rep, payload.reporte_codigo)
+
+
+@app.post("/solicitudes-v2", response_model=SolicitudOut, tags=["solicitudes"])
+def create_solicitud_v2(
+    payload: SolicitudCreateV2,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    rep = crud.get_reporte_by_codigo(db, payload.reporte_codigo)
+    if not rep or rep.activo != 1:
+        raise HTTPException(status_code=404, detail="Reporte no existe o inactivo")
+
+    _require_reporte_access(db, rep, current_user)
+
+    input_defs = crud.get_reporte_input_defs(db, rep.id, only_active=False)
+    if not input_defs:
+        raise HTTPException(
+            status_code=400,
+            detail="El reporte no tiene definiciones de input. Usa POST /solicitudes para el modo legacy",
+        )
+
+    try:
+        s = crud.create_solicitud_multi_input(
+            db=db,
+            reporte=rep,
+            usuario=current_user["username"],
+            payload=payload,
+            input_defs=input_defs,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    rep = db.get(Reporte, s.reporte_id)
+    return _build_solicitud_out(s, rep, payload.reporte_codigo)
 
 
 @app.get("/solicitudes/{request_id}", response_model=SolicitudOut, tags=["solicitudes"])
-def get_solicitud(request_id: str, db: Session = Depends(get_db)):
+def get_solicitud(
+    request_id: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     s = crud.get_solicitud_by_request_id(db, request_id)
     if not s:
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
 
+    _require_solicitud_access(s, current_user, "No tienes acceso a esta solicitud")
+
     rep = db.get(Reporte, s.reporte_id)
-    return SolicitudOut(
-        request_id=s.request_id,
-        reporte_codigo=rep.codigo if rep else "UNKNOWN",
-        usuario=s.usuario,
-        estado=s.estado,
-        progreso=s.progreso,
-        mensaje_estado=s.mensaje_estado,
-        ruta_output=s.ruta_output or (rep.ruta_output_base if rep else None),
-        error_detalle=s.error_detalle,
-        fecha_solicitud=s.fecha_solicitud,
-        fecha_inicio=s.fecha_inicio,
-        fecha_fin=s.fecha_fin,
-        updated_at=s.updated_at,
+    return _build_solicitud_out(s, rep, "UNKNOWN")
+
+
+@app.get("/solicitudes/{request_id}/detalle", response_model=SolicitudDetalleOut, tags=["solicitudes"])
+def get_solicitud_detalle(
+    request_id: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    s = crud.get_solicitud_by_request_id(db, request_id)
+    if not s:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+
+    _require_solicitud_access(s, current_user, "No tienes acceso al detalle de esta solicitud")
+
+    rep = db.get(Reporte, s.reporte_id)
+    input_rows = crud.get_solicitud_input_valores(db, s.id)
+    modo_inputs = "multi_input" if input_rows else "legacy"
+    base = _build_solicitud_out(s, rep, "UNKNOWN")
+    include_sensitive = _is_admin_user(current_user)
+    intentos_detalle = _collect_request_attempt_artifacts(s.request_id, include_sensitive=include_sensitive)
+    intentos_registrados = max(len(intentos_detalle), s.intentos or 0)
+    if intentos_registrados == 0 and s.estado == "EJECUTANDO":
+        intentos_registrados = 1
+    intento_actual_o_ultimo: int | None = None
+    if intentos_detalle:
+        intento_actual_o_ultimo = intentos_detalle[-1].intento
+    elif s.estado == "EJECUTANDO":
+        intento_actual_o_ultimo = max(1, (s.intentos or 0) + 1)
+    elif (s.intentos or 0) > 0:
+        intento_actual_o_ultimo = s.intentos
+
+    ultimo_intento = intentos_detalle[-1] if intentos_detalle else None
+
+    return SolicitudDetalleOut(
+        **base.model_dump(),
+        modo_inputs=modo_inputs,
+        ruta_input_legacy=s.ruta_input,
+        parametros=_parse_json_object(s.parametros_json),
+        inputs_enviados=_build_solicitud_input_out_rows(db, input_rows),
+        intentos_registrados=intentos_registrados,
+        max_intentos=max(1, s.max_intentos or 1),
+        intento_actual_o_ultimo=intento_actual_o_ultimo,
+        log_path_ultimo=ultimo_intento.log_path if ultimo_intento else None,
+        payload_path_ultimo=ultimo_intento.payload_path if ultimo_intento else None,
+        comando_ultimo=ultimo_intento.comando if ultimo_intento else None,
+        intentos_detalle=intentos_detalle,
     )
 
 
@@ -561,8 +1266,11 @@ def mis_solicitudes(
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=500),
     db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
 ):
     usuario_norm = usuario.strip()
+    if not _is_admin_user(current_user):
+        usuario_norm = current_user["username"]
     estado_norm = (estado or "").strip().upper()
     reporte_codigo_norm = (reporte_codigo or "").strip().upper()
 
@@ -633,10 +1341,16 @@ def mis_solicitudes(
 
 
 @app.get("/solicitudes/{request_id}/eventos", response_model=list[EventoOut], tags=["solicitudes"])
-def solicitud_eventos(request_id: str, db: Session = Depends(get_db)):
+def solicitud_eventos(
+    request_id: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     s = crud.get_solicitud_by_request_id(db, request_id)
     if not s:
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+
+    _require_solicitud_access(s, current_user, "No tienes acceso a los eventos de esta solicitud")
 
     events = (
         db.query(SolicitudEvento)
@@ -652,10 +1366,13 @@ def list_archivos_input(
     codigo: str,
     max_items: int = Query(200, ge=1, le=1000),
     db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
 ):
     rep = crud.get_reporte_by_codigo(db, codigo)
     if not rep or rep.activo != 1:
         raise HTTPException(status_code=404, detail="Reporte no existe o inactivo")
+
+    _require_reporte_access(db, rep, current_user)
     
     rows = db.execute(
         select(ReporteCarpetaPermitida).where(

@@ -28,6 +28,14 @@
     apiBase: window.location.origin,
     selectedRequestId: null,
     lastParametrosEjemploAplicado: "",
+    nuevaSolicitudInputs: {
+      modo: null,
+      definitions: [],
+      values: {},
+      filesByInput: {},
+      loading: false,
+      errors: {},
+    },
     adminAccessSummary: {
       usuarioEquipoIds: [],
       reporteEquipoIds: [],
@@ -47,6 +55,14 @@
       step: "datos",
       selectedReport: null,
       rutas: [],
+      inputs: {
+        items: [],
+        selectedInputId: null,
+        carpetasByInput: {},
+        loading: false,
+        mode: "legacy",
+        editingInputId: null,
+      },
     },
     adminTablaConsultaConfigurator: {
       mode: "create",
@@ -159,6 +175,8 @@
     state.adminConfigurator.step = "datos";
     state.adminConfigurator.selectedReport = null;
     state.adminConfigurator.rutas = [];
+    resetConfiguratorInputsState();
+    closeConfiguratorInputForm();
   }
 
   function closeAdminEquipoModal() {
@@ -314,18 +332,23 @@
 
   function syncConfiguratorFlowActions() {
     const hasReport = canUseAdvancedConfiguratorSteps();
-    const requiereInput = isConfiguratorInputRequired();
     const btnDatos = $("btnCfgGoToRutas");
     const btnRutas = $("btnCfgGoToEquipos");
     const rutasActivas = (state.adminConfigurator.rutas || []).filter((r) => Number(r.activo) === 1).length;
+    const inputState = getConfiguratorInputsState();
+    const inputMode = getConfiguratorInputMode();
+    const activeInputs = (inputState.items || []).filter((r) => Number(r.activo) === 1);
 
     if (btnDatos) {
-      btnDatos.textContent = requiereInput ? "Continuar con rutas" : "Continuar con equipos";
+      btnDatos.textContent = "Continuar con entradas";
       btnDatos.disabled = !hasReport;
     }
 
     if (btnRutas) {
-      btnRutas.hidden = !(hasReport && requiereInput && rutasActivas > 0);
+      const canContinue = inputMode === "multi_input"
+        ? activeInputs.length > 0
+        : (Number($("admEditRepReqInput")?.value || 0) !== 1 || rutasActivas > 0);
+      btnRutas.hidden = !hasReport || !canContinue;
     }
   }
 
@@ -380,14 +403,30 @@
     const equiposAsignados = (state.adminReporteEquipoIds || []).length;
     const rutasConfiguradas = (state.adminConfigurator.rutas || []).filter((r) => Number(r.activo) === 1).length;
     const requiereInput = Number(report.requiere_input_archivo) === 1;
+    const inputState = getConfiguratorInputsState();
+    const inputMode = getConfiguratorInputMode();
+    const activeInputs = (inputState.items || []).filter((r) => Number(r.activo) === 1);
+    const requiredInputs = activeInputs.filter((r) => Number(r.obligatorio) === 1);
+    const fileInputs = activeInputs.filter((r) => r.tipo_input === "archivo");
+    const fileInputsWithoutFolders = fileInputs.filter((input) => {
+      const cache = getInputFolderCache(input.id);
+      const items = cache.items || [];
+      return items.filter((folder) => Number(folder.activo) === 1).length === 0;
+    });
 
     wrap.innerHTML = `
       <div class="kv"><label>ID</label><div class="mono">${esc(report.id)}</div></div>
       <div class="kv"><label>Código</label><div class="mono">${esc(report.codigo || "-")}</div></div>
       <div class="kv"><label>Nombre</label><div>${esc(report.nombre || "-")}</div></div>
       <div class="kv"><label>Activo</label><div>${Number(report.activo) === 1 ? "Sí" : "No"}</div></div>
+      <div class="kv"><label>Modo</label><div>${inputMode === "multi_input" ? "Multi-input" : "Legacy"}</div></div>
       <div class="kv"><label>Requiere input</label><div>${requiereInput ? "Sí" : "No"}</div></div>
-      <div class="kv"><label>Rutas configuradas</label><div>${requiereInput ? rutasConfiguradas : "No aplica"}</div></div>
+      <div class="kv"><label>Tipos permitidos legacy</label><div>${esc(report.tipos_permitidos || "No configurado")}</div></div>
+      <div class="kv"><label>Rutas legacy activas</label><div>${requiereInput ? rutasConfiguradas : "No aplica"}</div></div>
+      <div class="kv"><label>Inputs activos</label><div>${inputMode === "multi_input" ? activeInputs.length : "No aplica"}</div></div>
+      <div class="kv"><label>Inputs obligatorios</label><div>${inputMode === "multi_input" ? requiredInputs.length : "No aplica"}</div></div>
+      <div class="kv"><label>Inputs tipo archivo</label><div>${inputMode === "multi_input" ? fileInputs.length : "No aplica"}</div></div>
+      <div class="kv"><label>Archivo sin carpetas activas</label><div>${inputMode === "multi_input" ? fileInputsWithoutFolders.length : "No aplica"}</div></div>
       <div class="kv"><label>Equipos asignados</label><div>${equiposAsignados}</div></div>
       <div class="kv"><label>Comando</label><div>${esc(report.comando || "Sin comando configurado")}</div></div>
     `;
@@ -401,6 +440,533 @@
       "adminReporteEquipoIds",
       $("cfgReporteEquiposFiltro")?.value || ""
     );
+  }
+
+  function getConfiguratorInputsState() {
+    return state.adminConfigurator.inputs || {
+      items: [],
+      selectedInputId: null,
+      carpetasByInput: {},
+      loading: false,
+      mode: "legacy",
+      editingInputId: null,
+    };
+  }
+
+  function resetConfiguratorInputsState() {
+    state.adminConfigurator.inputs = {
+      items: [],
+      selectedInputId: null,
+      carpetasByInput: {},
+      loading: false,
+      mode: "legacy",
+      editingInputId: null,
+    };
+  }
+
+  function getConfiguratorInputMode() {
+    return getConfiguratorInputsState().mode || "legacy";
+  }
+
+  function getSelectedConfiguratorInput() {
+    const inputState = getConfiguratorInputsState();
+    return (inputState.items || []).find((item) => Number(item.id) === Number(inputState.selectedInputId)) || null;
+  }
+
+  function getInputTypeLabel(tipo) {
+    if (tipo === "archivo") return "Archivo";
+    if (tipo === "texto") return "Texto";
+    if (tipo === "periodo") return "Periodo";
+    return tipo || "-";
+  }
+
+  function getInputStatusLabel(value) {
+    return Number(value) === 1 ? "Activo" : "Inactivo";
+  }
+
+  function getBinaryLabel(value) {
+    return Number(value) === 1 ? "Sí" : "No";
+  }
+
+  function getInputFolderCache(inputId) {
+    const inputState = getConfiguratorInputsState();
+    return inputState.carpetasByInput[String(inputId)] || { items: [], loaded: false, loading: false };
+  }
+
+  function setInputFolderCache(inputId, patch) {
+    const inputState = getConfiguratorInputsState();
+    inputState.carpetasByInput[String(inputId)] = {
+      ...getInputFolderCache(inputId),
+      ...(patch || {}),
+    };
+  }
+
+  async function preloadInputFolderCaches(items = []) {
+    const fileInputs = (items || []).filter((item) => item.tipo_input === "archivo");
+    await Promise.all(fileInputs.map(async (input) => {
+      const cache = getInputFolderCache(input.id);
+      if (cache.loaded || cache.loading) return;
+      setInputFolderCache(input.id, { loading: true });
+      try {
+        const rows = await getAdminInputCarpetas(input.id);
+        setInputFolderCache(input.id, { items: rows || [], loaded: true, loading: false });
+      } catch (_) {
+        setInputFolderCache(input.id, { items: [], loaded: false, loading: false });
+      }
+    }));
+  }
+
+  function validateConfiguratorInputCode(value) {
+    return /^[a-z][a-z0-9_]{1,99}$/.test((value || "").trim());
+  }
+
+  function syncConfiguratorInputModeUI() {
+    const report = getConfiguratorSelectedReport();
+    const inputState = getConfiguratorInputsState();
+    const modeEl = $("cfgInputModeBadge");
+    const helperEl = $("cfgInputModeHint");
+    const warningEl = $("cfgLegacyCompatibilityWarning");
+    const rutasSection = $("cfgLegacyRutasSection");
+    const rutasLabel = $("cfgLegacyRutasLabel");
+    const inputSection = $("cfgInputsSection");
+
+    if (modeEl) {
+      modeEl.textContent = inputState.mode === "multi_input" ? "Modo de entradas: Multi-input" : "Modo de entradas: Legacy";
+      modeEl.className = `badge ${inputState.mode === "multi_input" ? "badge--multi-input" : "badge--neutral"}`;
+    }
+
+    if (helperEl) {
+      if (!report?.id) {
+        helperEl.textContent = "Guarda primero el reporte para habilitar la configuración avanzada.";
+      } else if (inputState.mode === "multi_input") {
+        helperEl.textContent = "Este reporte tiene inputs definidos. La gestión principal ocurre por input.";
+      } else {
+        helperEl.textContent = "Este reporte sigue usando la configuración legacy de input único y rutas por reporte.";
+      }
+    }
+
+    if (warningEl) {
+      warningEl.hidden = inputState.mode !== "multi_input";
+    }
+
+    if (rutasSection) {
+      rutasSection.classList.toggle("is-secondary", inputState.mode === "multi_input");
+    }
+
+    if (rutasLabel) {
+      rutasLabel.textContent = inputState.mode === "multi_input" ? "Rutas legacy del reporte" : "Rutas legacy del reporte (modo principal)";
+    }
+
+    if (inputSection) {
+      inputSection.classList.toggle("is-secondary", inputState.mode === "legacy");
+    }
+  }
+
+  function syncConfiguratorInputForm() {
+    const type = $("cfgInputTipo")?.value || "archivo";
+    const tiposField = $("cfgInputTiposField");
+    const tiposInput = $("cfgInputTipos");
+    const title = $("cfgInputFormTitle");
+    const inputState = getConfiguratorInputsState();
+    const isEditing = !!inputState.editingInputId;
+
+    if (tiposField) {
+      tiposField.hidden = type !== "archivo";
+    }
+    if (tiposInput && type !== "archivo") {
+      tiposInput.value = "";
+    }
+    if (title) {
+      title.textContent = isEditing ? "Editar input" : "Nuevo input";
+    }
+    const codeInput = $("cfgInputCodigo");
+    if (codeInput) {
+      codeInput.disabled = isEditing;
+      codeInput.title = isEditing ? "codigo_input no se puede editar en V1." : "";
+    }
+  }
+
+  function clearConfiguratorInputForm() {
+    const inputState = getConfiguratorInputsState();
+    inputState.editingInputId = null;
+    if ($("cfgInputForm")) $("cfgInputForm").reset();
+    if ($("cfgInputActivo")) $("cfgInputActivo").value = "1";
+    if ($("cfgInputObligatorio")) $("cfgInputObligatorio").value = "1";
+    if ($("cfgInputOrden")) $("cfgInputOrden").value = "1";
+    if ($("cfgInputTipo")) $("cfgInputTipo").value = "archivo";
+    if ($("cfgInputTipos")) $("cfgInputTipos").value = "";
+    if ($("cfgInputCodigo")) $("cfgInputCodigo").value = "";
+    if ($("cfgInputNombre")) $("cfgInputNombre").value = "";
+    syncConfiguratorInputForm();
+  }
+
+  function openInputFormForCreate() {
+    const report = getConfiguratorSelectedReport();
+    if (!report?.id) {
+      showAlert("Primero guarda el reporte.", "err");
+      return;
+    }
+    clearConfiguratorInputForm();
+    const wrap = $("cfgInputFormWrap");
+    if (wrap) wrap.hidden = false;
+  }
+
+  function openInputFormForEdit(inputId) {
+    const inputState = getConfiguratorInputsState();
+    const row = (inputState.items || []).find((item) => Number(item.id) === Number(inputId));
+    if (!row) {
+      showAlert("No se encontró el input seleccionado.", "err");
+      return;
+    }
+
+    inputState.editingInputId = Number(row.id);
+    if ($("cfgInputCodigo")) $("cfgInputCodigo").value = row.codigo_input || "";
+    if ($("cfgInputNombre")) $("cfgInputNombre").value = row.nombre_visible || "";
+    if ($("cfgInputTipo")) $("cfgInputTipo").value = row.tipo_input || "archivo";
+    if ($("cfgInputObligatorio")) $("cfgInputObligatorio").value = String(Number(row.obligatorio) === 1 ? 1 : 0);
+    if ($("cfgInputOrden")) $("cfgInputOrden").value = String(row.orden || 1);
+    if ($("cfgInputActivo")) $("cfgInputActivo").value = String(Number(row.activo) === 1 ? 1 : 0);
+    if ($("cfgInputTipos")) $("cfgInputTipos").value = row.tipos_permitidos || "";
+    syncConfiguratorInputForm();
+    const wrap = $("cfgInputFormWrap");
+    if (wrap) wrap.hidden = false;
+  }
+
+  function closeConfiguratorInputForm() {
+    const wrap = $("cfgInputFormWrap");
+    if (wrap) wrap.hidden = true;
+    clearConfiguratorInputForm();
+  }
+
+  function getConfiguratorInputPayloadFromForm() {
+    const tipo = $("cfgInputTipo")?.value || "archivo";
+    return {
+      codigo_input: $("cfgInputCodigo")?.value?.trim(),
+      nombre_visible: $("cfgInputNombre")?.value?.trim(),
+      tipo_input: tipo,
+      obligatorio: Number($("cfgInputObligatorio")?.value || 0),
+      orden: Number($("cfgInputOrden")?.value || 1),
+      activo: Number($("cfgInputActivo")?.value || 0),
+      tipos_permitidos: tipo === "archivo" ? ($("cfgInputTipos")?.value?.trim() || null) : null,
+    };
+  }
+
+  function validateConfiguratorInputForm() {
+    const code = $("cfgInputCodigo");
+    const name = $("cfgInputNombre");
+    const order = $("cfgInputOrden");
+    const tipos = $("cfgInputTipos");
+    const type = $("cfgInputTipo")?.value || "";
+
+    if (code) {
+      const valid = validateConfiguratorInputCode(code.value);
+      code.setCustomValidity(valid ? "" : "Usa snake_case seguro: empieza con letra y sigue con letras, números o _.");
+    }
+    if (name) {
+      name.setCustomValidity((name.value || "").trim() ? "" : "El nombre visible es obligatorio.");
+    }
+    if (order) {
+      const orderValue = Number(order.value || 0);
+      order.setCustomValidity(orderValue >= 1 ? "" : "El orden debe ser mayor o igual que 1.");
+    }
+    if (tipos) {
+      const raw = (tipos.value || "").trim();
+      const valid = !raw || /^[A-Za-z0-9.;,\s]+$/.test(raw);
+      tipos.setCustomValidity(type !== "archivo" || valid ? "" : "Usa extensiones como csv;xlsx.");
+    }
+    return !!$("cfgInputForm")?.reportValidity();
+  }
+
+  async function loadConfiguratorInputs() {
+    const report = getConfiguratorSelectedReport();
+    const tbody = $("cfgTbodyInputs");
+    const emptyWrap = $("cfgInputsEmpty");
+    const inputState = getConfiguratorInputsState();
+    if (!tbody) return;
+
+    if (!report?.id) {
+      resetConfiguratorInputsState();
+      renderConfiguratorInputs();
+      syncConfiguratorInputModeUI();
+      renderConfiguratorReview();
+      return;
+    }
+
+    inputState.loading = true;
+    tbody.innerHTML = `<tr><td colspan="7" class="table-empty">Cargando inputs...</td></tr>`;
+    if (emptyWrap) emptyWrap.hidden = true;
+
+    try {
+      const rows = await getAdminReporteInputs(report.id);
+      inputState.items = rows || [];
+      inputState.mode = (rows || []).length > 0 ? "multi_input" : "legacy";
+      if (inputState.selectedInputId && !(rows || []).some((item) => Number(item.id) === Number(inputState.selectedInputId))) {
+        inputState.selectedInputId = null;
+      }
+      await preloadInputFolderCaches(rows || []);
+      renderConfiguratorInputs();
+    } catch (e) {
+      resetConfiguratorInputsState();
+      tbody.innerHTML = `<tr><td colspan="7" class="table-empty">Error al cargar inputs.</td></tr>`;
+      showAlert(`No se pudieron cargar inputs del reporte: ${e.message}`, "err");
+    } finally {
+      inputState.loading = false;
+      syncConfiguratorInputModeUI();
+      renderInputCarpetas();
+      renderConfiguratorReview();
+      syncConfiguratorFlowActions();
+    }
+  }
+
+  function renderConfiguratorInputs() {
+    const tbody = $("cfgTbodyInputs");
+    const emptyWrap = $("cfgInputsEmpty");
+    if (!tbody) return;
+
+    const inputState = getConfiguratorInputsState();
+    const rows = inputState.items || [];
+
+    if (!rows.length) {
+      tbody.innerHTML = `<tr><td colspan="7" class="table-empty">No hay inputs definidos para este reporte.</td></tr>`;
+      if (emptyWrap) emptyWrap.hidden = false;
+      syncConfiguratorInputModeUI();
+      syncConfiguratorFlowActions();
+      return;
+    }
+
+    if (emptyWrap) emptyWrap.hidden = true;
+    tbody.innerHTML = rows.map((r) => `
+      <tr class="${Number(r.id) === Number(inputState.selectedInputId) ? "is-row-highlighted" : ""}">
+        <td class="mono">${esc(r.codigo_input)}</td>
+        <td>${esc(r.nombre_visible)}</td>
+        <td>${esc(getInputTypeLabel(r.tipo_input))}</td>
+        <td>${getBinaryLabel(r.obligatorio)}</td>
+        <td>${esc(r.orden)}</td>
+        <td>${Number(r.activo) === 1 ? '<span class="status-pill status-OK">Activo</span>' : '<span class="status-pill status-CANCELADO">Inactivo</span>'}</td>
+        <td>
+          <div class="inline-controls inline-controls--wrap">
+            <button class="btn btn--ghost btn--sm btn-cfg-input-edit" data-id="${esc(r.id)}">Editar</button>
+            <button class="btn btn--ghost btn--sm btn-cfg-input-toggle" data-id="${esc(r.id)}" data-next="${Number(r.activo) === 1 ? "0" : "1"}">
+              ${Number(r.activo) === 1 ? "Desactivar" : "Activar"}
+            </button>
+            ${r.tipo_input === "archivo" ? `<button class="btn btn--ghost btn--sm btn-cfg-input-folders" data-id="${esc(r.id)}">Carpetas</button>` : ""}
+          </div>
+        </td>
+      </tr>
+    `).join("");
+
+    document.querySelectorAll(".btn-cfg-input-edit").forEach((btn) => {
+      btn.addEventListener("click", () => openInputFormForEdit(btn.dataset.id));
+    });
+
+    document.querySelectorAll(".btn-cfg-input-toggle").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = Number(btn.dataset.id || 0);
+        const next = Number(btn.dataset.next || 0);
+        const row = rows.find((item) => Number(item.id) === id);
+        if (!row) return;
+
+        if (Number(row.activo) === 1 && !window.confirm("Este input dejará de aparecer en nuevas solicitudes, pero no se eliminará su historial.")) {
+          return;
+        }
+
+        try {
+          if (next === 0) {
+            await deleteAdminReporteInput(id);
+            showAlert("Input desactivado correctamente.", "ok");
+          } else {
+            await updateAdminReporteInput(id, { activo: 1 });
+            showAlert("Input reactivado correctamente.", "ok");
+          }
+          await loadConfiguratorInputs();
+        } catch (e) {
+          showAlert(`No se pudo cambiar el estado del input: ${e.message}`, "err");
+        }
+      });
+    });
+
+    document.querySelectorAll(".btn-cfg-input-folders").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const inputId = Number(btn.dataset.id || 0);
+        inputState.selectedInputId = inputId;
+        await loadInputCarpetas(inputId);
+        renderConfiguratorInputs();
+      });
+    });
+
+    syncConfiguratorInputModeUI();
+    renderInputCarpetas();
+    syncConfiguratorFlowActions();
+  }
+
+  async function saveConfiguratorInput(ev) {
+    ev.preventDefault();
+    const report = getConfiguratorSelectedReport();
+    const inputState = getConfiguratorInputsState();
+    if (!report?.id) {
+      showAlert("Primero guarda el reporte.", "err");
+      return;
+    }
+    if (!validateConfiguratorInputForm()) return;
+
+    const payload = getConfiguratorInputPayloadFromForm();
+    const isEditing = !!inputState.editingInputId;
+    const previous = isEditing
+      ? (inputState.items || []).find((item) => Number(item.id) === Number(inputState.editingInputId))
+      : null;
+
+    if (previous?.tipo_input === "archivo" && payload.tipo_input !== "archivo") {
+      const confirmed = window.confirm("Este input dejará de ser de tipo archivo. Sus carpetas asociadas no se eliminarán, pero ya no serán usadas mientras el input no sea de tipo archivo.");
+      if (!confirmed) return;
+    }
+
+    const wasLegacy = getConfiguratorInputMode() === "legacy";
+    try {
+      if (isEditing) {
+        const patchPayload = {
+          nombre_visible: payload.nombre_visible,
+          tipo_input: payload.tipo_input,
+          obligatorio: payload.obligatorio,
+          orden: payload.orden,
+          activo: payload.activo,
+          tipos_permitidos: payload.tipo_input === "archivo" ? payload.tipos_permitidos : null,
+        };
+        await updateAdminReporteInput(inputState.editingInputId, patchPayload);
+        showAlert("Input actualizado correctamente.", "ok");
+      } else {
+        await createAdminReporteInput(report.id, payload);
+        showAlert("Input creado correctamente.", "ok");
+      }
+      closeConfiguratorInputForm();
+      await loadConfiguratorInputs();
+      if (!isEditing && wasLegacy && getConfiguratorInputMode() === "multi_input") {
+        showAlert("Se creó el primer input del reporte. Este reporte ahora queda configurado como multi-input para el nuevo flujo.", "info");
+      }
+    } catch (e) {
+      showAlert(`${isEditing ? "No se pudo actualizar el input" : "No se pudo crear el input"}: ${e.message}`, "err");
+    }
+  }
+
+  async function loadInputCarpetas(inputId) {
+    const inputState = getConfiguratorInputsState();
+    const input = (inputState.items || []).find((item) => Number(item.id) === Number(inputId));
+    if (!input || input.tipo_input !== "archivo") {
+      inputState.selectedInputId = null;
+      renderInputCarpetas();
+      return;
+    }
+
+    inputState.selectedInputId = Number(inputId);
+    setInputFolderCache(inputId, { loading: true });
+    renderInputCarpetas();
+    try {
+      const rows = await getAdminInputCarpetas(inputId);
+      setInputFolderCache(inputId, { items: rows || [], loaded: true, loading: false });
+    } catch (e) {
+      setInputFolderCache(inputId, { items: [], loaded: false, loading: false });
+      showAlert(`No se pudieron cargar carpetas del input: ${e.message}`, "err");
+    }
+    renderInputCarpetas();
+    renderConfiguratorReview();
+  }
+
+  function renderInputCarpetas() {
+    const wrap = $("cfgInputFoldersWrap");
+    const title = $("cfgInputFoldersTitle");
+    const tbody = $("cfgInputFoldersTbody");
+    const hint = $("cfgInputFoldersHint");
+    if (!wrap || !tbody || !title || !hint) return;
+
+    const selectedInput = getSelectedConfiguratorInput();
+    if (!selectedInput || selectedInput.tipo_input !== "archivo") {
+      wrap.hidden = true;
+      return;
+    }
+
+    wrap.hidden = false;
+    title.textContent = `Carpetas permitidas para: ${selectedInput.nombre_visible}`;
+    const cache = getInputFolderCache(selectedInput.id);
+
+    if (cache.loading) {
+      hint.textContent = "Cargando carpetas...";
+      tbody.innerHTML = `<tr><td colspan="4" class="table-empty">Cargando carpetas...</td></tr>`;
+      return;
+    }
+
+    hint.textContent = "Administra carpetas activas e inactivas para este input de tipo archivo.";
+    if (!(cache.items || []).length) {
+      tbody.innerHTML = `<tr><td colspan="4" class="table-empty">No hay carpetas registradas para este input.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = (cache.items || []).map((r) => `
+      <tr>
+        <td class="mono">${esc(r.id)}</td>
+        <td><input id="cfg_input_carpeta_${esc(r.id)}" class="input-sm" type="text" value="${esc(r.ruta_base)}" /></td>
+        <td>${Number(r.activo) === 1 ? '<span class="status-pill status-OK">Activo</span>' : '<span class="status-pill status-CANCELADO">Inactivo</span>'}</td>
+        <td>
+          <div class="inline-controls inline-controls--wrap">
+            <button class="btn btn--ghost btn--sm btn-cfg-input-folder-save" data-id="${esc(r.id)}">Guardar</button>
+            <button class="btn btn--ghost btn--sm btn-cfg-input-folder-toggle" data-id="${esc(r.id)}" data-next="${Number(r.activo) === 1 ? "0" : "1"}">
+              ${Number(r.activo) === 1 ? "Desactivar" : "Activar"}
+            </button>
+          </div>
+        </td>
+      </tr>
+    `).join("");
+
+    document.querySelectorAll(".btn-cfg-input-folder-save").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = Number(btn.dataset.id || 0);
+        const ruta = ($(`cfg_input_carpeta_${id}`)?.value || "").trim();
+        if (!ruta) {
+          showAlert("La ruta base no puede estar vacía.", "err");
+          return;
+        }
+        try {
+          await updateAdminInputCarpeta(id, { ruta_base: ruta });
+          showAlert("Carpeta actualizada correctamente.", "ok");
+          await loadInputCarpetas(selectedInput.id);
+        } catch (e) {
+          showAlert(`No se pudo actualizar la carpeta: ${e.message}`, "err");
+        }
+      });
+    });
+
+    document.querySelectorAll(".btn-cfg-input-folder-toggle").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = Number(btn.dataset.id || 0);
+        const next = Number(btn.dataset.next || 0);
+        try {
+          await updateAdminInputCarpeta(id, { activo: next });
+          showAlert(`Carpeta ${next === 1 ? "activada" : "desactivada"} correctamente.`, "ok");
+          await loadInputCarpetas(selectedInput.id);
+        } catch (e) {
+          showAlert(`No se pudo cambiar el estado de la carpeta: ${e.message}`, "err");
+        }
+      });
+    });
+  }
+
+  async function addInputCarpeta() {
+    const selectedInput = getSelectedConfiguratorInput();
+    const ruta = $("cfgInputCarpetaNueva")?.value?.trim();
+    if (!selectedInput || selectedInput.tipo_input !== "archivo") {
+      showAlert("Selecciona un input de tipo archivo para administrar carpetas.", "err");
+      return;
+    }
+    if (!ruta) {
+      showAlert("Ingresa una ruta base.", "err");
+      return;
+    }
+    try {
+      await createAdminInputCarpeta(selectedInput.id, { ruta_base: ruta });
+      $("cfgInputCarpetaNueva").value = "";
+      showAlert("Carpeta agregada correctamente.", "ok");
+      await loadInputCarpetas(selectedInput.id);
+    } catch (e) {
+      showAlert(`No se pudo agregar la carpeta: ${e.message}`, "err");
+    }
   }
 
   function openAdminTablaConsultaModal() {
@@ -512,6 +1078,17 @@
     const duration = Number(options.duration);
     const autoCloseAfter = Number.isFinite(duration) ? duration : 4500;
 
+    if (options.replace) {
+      const replaceTypes = Array.isArray(options.replaceTypes) && options.replaceTypes.length
+        ? options.replaceTypes.map(normalizeToastType)
+        : null;
+      wrap.querySelectorAll(".app-toast").forEach((existingToast) => {
+        const matchesType = !replaceTypes || replaceTypes.some((toastType) => existingToast.classList.contains(toastType));
+        if (!matchesType) return;
+        existingToast.remove();
+      });
+    }
+
     const toast = document.createElement("div");
     toast.className = `app-toast ${normalizedType}`;
     toast.setAttribute("role", normalizedType === "error" || normalizedType === "warning" ? "alert" : "status");
@@ -595,15 +1172,14 @@
         showLoginView(`Sesión expirada o inválida. Por favor, ingrese de nuevo. (Detalle: ${detail})`);
       }
 
-      if (res.status === 403) {
-        throw new Error("Permisos insuficientes. Requieres permisos de administrador.");
-      }
-
       let detail = `HTTP ${res.status}`;
       try {
         const body = await res.json();
         detail = body.detail || detail;
       } catch (_) { }
+      if (res.status === 403 && !detail) {
+        detail = "Permisos insuficientes.";
+      }
       throw new Error(detail);
     }
 
@@ -645,12 +1221,17 @@
   // ---------- Reportes ----------
   async function loadReportes() {
     const sel = $("reporte");
+    if (!sel) return;
+
     sel.innerHTML = `<option value="">Cargando...</option>`;
     try {
       const rows = await api("/reportes");
       state.reportes = rows || [];
       if (!rows.length) {
         sel.innerHTML = `<option value="">No hay reportes activos</option>`;
+        resetNuevaSolicitudInputsState();
+        renderNuevaSolicitudInputs();
+        updateHintRutaInput();
         return;
       }
 
@@ -658,45 +1239,117 @@
         rows.map(r => `<option value="${esc(r.codigo)}">${esc(r.codigo)} — ${esc(r.nombre)}</option>`).join("");
 
       updateHintRutaInput();
+      renderNuevaSolicitudInputs();
 
       // Also update admin dropdown
       fillAdminReportesSelect();
     } catch (e) {
       sel.innerHTML = `<option value="">Error al cargar reportes</option>`;
+      resetNuevaSolicitudInputsState();
+      renderNuevaSolicitudInputs();
       showAlert(`No se pudieron cargar reportes: ${e.message}`, "err");
     }
-  }
-
-  async function cargarArchivosReporte(codigo) {
-    const res = await fetch(`/reportes/${encodeURIComponent(codigo)}/archivos-input`);
-    const data = await res.json();
-    const sel = document.getElementById("ruta_input_select");
-    sel.innerHTML = `<option value="">-- Selecciona un archivo --</option>`;
-
-    for (const ruta of (data.archivos || [])) {
-      const opt = document.createElement("option");
-      opt.value = ruta;
-      opt.title = ruta;
-      opt.textContent = getFileOptionLabel(ruta);
-      sel.appendChild(opt);
-    }
-
-    document.getElementById("archivos_help").textContent = `${(data.archivos || []).length} archivo(s) disponibles`;
   }
 
   function getReporteByCodigo(codigo) {
     return state.reportes.find(r => r.codigo === codigo) || null;
   }
 
+  function getNuevaSolicitudInputsState() {
+    return state.nuevaSolicitudInputs || {
+      modo: null,
+      definitions: [],
+      values: {},
+      filesByInput: {},
+      loading: false,
+      errors: {},
+    };
+  }
+
+  function resetNuevaSolicitudInputsState() {
+    state.nuevaSolicitudInputs = {
+      modo: null,
+      definitions: [],
+      values: {},
+      filesByInput: {},
+      loading: false,
+      errors: {},
+    };
+  }
+
+  async function getReporteInputs(codigoReporte) {
+    return api(`/reportes/${encodeURIComponent(codigoReporte)}/inputs`);
+  }
+
+  async function getArchivosInputReporte(codigoReporte, codigoInput) {
+    return api(`/reportes/${encodeURIComponent(codigoReporte)}/inputs/${encodeURIComponent(codigoInput)}/archivos`);
+  }
+
+  function setNuevaSolicitudModeBadge(mode, options = {}) {
+    const badge = $("nuevaSolicitudModeBadge");
+    const help = $("nuevaSolicitudModeHelp");
+    const parametrosHelp = $("parametros_help");
+    if (badge) {
+      badge.className = `badge ${mode === "multi_input" ? "badge--multi-input" : "badge--neutral"}`;
+    }
+
+    if (mode === "loading") {
+      if (badge) badge.textContent = "Cargando modo";
+      if (help) help.textContent = "Consultando la configuración operativa del reporte.";
+      if (parametrosHelp) {
+        parametrosHelp.textContent = "Espera a que se cargue el reporte para validar cómo se usarán los parámetros.";
+      }
+      return;
+    }
+
+    if (!mode) {
+      if (badge) badge.textContent = "Modo pendiente";
+      if (help) help.textContent = "Selecciona un reporte para detectar el flujo disponible.";
+      if (parametrosHelp) {
+        parametrosHelp.textContent = "El ejemplo cambia según el reporte configurado.";
+      }
+      return;
+    }
+
+    if (mode === "multi_input") {
+      if (badge) badge.textContent = "Modo multi-input";
+      if (help) {
+        help.textContent = options.loading
+          ? "Se están cargando los inputs definidos del reporte."
+          : "Este reporte usa inputs definidos. El selector legacy queda solo como referencia.";
+      }
+      if (parametrosHelp) {
+        parametrosHelp.textContent = "Los parámetros JSON son complementarios. No reemplazan los inputs definidos del reporte.";
+      }
+      return;
+    }
+
+    if (badge) badge.textContent = "Modo legacy";
+    if (help) {
+      help.textContent = options.loading
+        ? "Se están cargando los archivos legacy permitidos para este reporte."
+        : "Este reporte mantiene el flujo actual de archivo único y envío por POST /solicitudes.";
+    }
+    if (parametrosHelp) {
+      parametrosHelp.textContent = "El ejemplo cambia según el reporte configurado.";
+    }
+  }
+
   function updateHintRutaInput() {
     const codigo = $("reporte").value || "";
     const r = getReporteByCodigo(codigo);
     const hint = $("hintRutaInput");
+    const nuevaSolicitudState = getNuevaSolicitudInputsState();
 
     if (!hint) return;
 
     if (!r) {
       hint.textContent = "Este reporte podría requerir archivo de entrada.";
+      return;
+    }
+
+    if (nuevaSolicitudState.modo === "multi_input") {
+      hint.textContent = "Este selector pertenece al flujo legacy y no se usa para reportes multi-input.";
       return;
     }
 
@@ -734,15 +1387,528 @@
     }
   }
 
+  function getNuevaSolicitudInputValue(codigoInput) {
+    const nuevaSolicitudState = getNuevaSolicitudInputsState();
+    return nuevaSolicitudState.values?.[codigoInput] ?? "";
+  }
+
+  function setNuevaSolicitudInputValue(codigoInput, value) {
+    const nuevaSolicitudState = getNuevaSolicitudInputsState();
+    nuevaSolicitudState.values = {
+      ...(nuevaSolicitudState.values || {}),
+      [codigoInput]: value ?? "",
+    };
+  }
+
+  function clearNuevaSolicitudInputError(codigoInput) {
+    const nuevaSolicitudState = getNuevaSolicitudInputsState();
+    if (!nuevaSolicitudState.errors?.[codigoInput]) return;
+    const nextErrors = { ...(nuevaSolicitudState.errors || {}) };
+    delete nextErrors[codigoInput];
+    nuevaSolicitudState.errors = nextErrors;
+    const errorEl = $(`nuevaSolicitudError_${codigoInput}`);
+    if (errorEl) errorEl.textContent = "";
+  }
+
+  function validatePeriodoInputValue(value) {
+    const raw = (value || "").trim();
+    if (!raw) return null;
+    if (!/^\d{6}$/.test(raw)) {
+      return "El periodo debe tener formato YYYYMM.";
+    }
+    const month = Number(raw.slice(4, 6));
+    if (!Number.isInteger(month) || month < 1 || month > 12) {
+      return "El periodo debe usar un mes entre 01 y 12.";
+    }
+    return null;
+  }
+
+  function getNuevaSolicitudFileCache(codigoInput) {
+    const nuevaSolicitudState = getNuevaSolicitudInputsState();
+    return nuevaSolicitudState.filesByInput?.[codigoInput] || {
+      items: [],
+      loading: false,
+      error: "",
+      loaded: false,
+    };
+  }
+
+  function renderLegacyInputSection() {
+    const section = $("nuevaSolicitudLegacySection");
+    const select = $("ruta_input_select");
+    const refreshBtn = $("btn_cargar_archivos");
+    const archivosHelp = $("archivos_help");
+    const nuevaSolicitudState = getNuevaSolicitudInputsState();
+    const reporte = getReporteByCodigo(($("reporte")?.value || "").trim());
+    const isMultiInput = nuevaSolicitudState.modo === "multi_input";
+    const isLoading = nuevaSolicitudState.loading;
+
+    if (section) {
+      section.classList.toggle("is-disabled", isMultiInput || isLoading);
+    }
+    if (select) {
+      select.disabled = isMultiInput || isLoading;
+    }
+    if (refreshBtn) {
+      refreshBtn.disabled = isLoading;
+      refreshBtn.title = isMultiInput
+        ? "Este botón aplica solo al flujo legacy."
+        : "Refrescar archivos";
+    }
+
+    updateHintRutaInput();
+
+    if (!archivosHelp) return;
+    if (!reporte) {
+      archivosHelp.textContent = "Opcional según reporte";
+      archivosHelp.title = "";
+      return;
+    }
+    if (isMultiInput) {
+      archivosHelp.textContent = "No aplica en modo multi-input.";
+      archivosHelp.title = "";
+      return;
+    }
+    if (isLoading) {
+      archivosHelp.textContent = "Cargando archivos legacy...";
+      return;
+    }
+    if (!reporte.requiere_input_archivo) {
+      archivosHelp.textContent = "Opcional según reporte";
+    }
+  }
+
+  function getNuevaSolicitudInputDisplayValue(inputDef) {
+    const value = getNuevaSolicitudInputValue(inputDef.codigo_input);
+    if (!value) return "Pendiente";
+    if (inputDef.tipo_input === "archivo") {
+      return getFileName(value);
+    }
+    return value;
+  }
+
+  function renderNuevaSolicitudInputsSummary() {
+    const wrap = $("nuevaSolicitudInputsSummary");
+    const nuevaSolicitudState = getNuevaSolicitudInputsState();
+    if (!wrap) return;
+
+    if (nuevaSolicitudState.modo !== "multi_input" || !nuevaSolicitudState.definitions.length) {
+      wrap.innerHTML = `<div class="result-empty">Aún no hay valores seleccionados.</div>`;
+      return;
+    }
+
+    const selectedDefs = nuevaSolicitudState.definitions.filter((inputDef) => {
+      const value = getNuevaSolicitudInputValue(inputDef.codigo_input);
+      return !!(value || "").trim();
+    });
+
+    if (!selectedDefs.length) {
+      wrap.innerHTML = `<div class="result-empty">Aún no hay valores seleccionados.</div>`;
+      return;
+    }
+
+    wrap.innerHTML = `
+      <div class="nueva-inputs-summary-grid">
+        ${selectedDefs.map((inputDef) => `
+          <div class="nueva-input-summary-item">
+            <strong>${esc(inputDef.nombre_visible)}</strong>
+            <span>${esc(getNuevaSolicitudInputDisplayValue(inputDef))}</span>
+          </div>
+        `).join("")}
+      </div>
+    `;
+  }
+
+  function renderMultiInputSection() {
+    const section = $("nuevaSolicitudInputsSection");
+    const container = $("nuevaSolicitudInputsContainer");
+    const status = $("nuevaSolicitudInputsStatus");
+    const help = $("nuevaSolicitudInputsHelp");
+    const nuevaSolicitudState = getNuevaSolicitudInputsState();
+    const hasReport = !!(($("reporte")?.value || "").trim());
+    const isMultiInput = nuevaSolicitudState.modo === "multi_input";
+
+    if (section) {
+      section.hidden = !isMultiInput;
+    }
+    if (!container || !status || !help) {
+      renderNuevaSolicitudInputsSummary();
+      return;
+    }
+
+    if (!hasReport) {
+      status.textContent = "Sin cargar";
+      status.className = "badge badge--neutral";
+      container.innerHTML = `<div class="result-empty">Selecciona un reporte para cargar sus inputs.</div>`;
+      renderNuevaSolicitudInputsSummary();
+      return;
+    }
+
+    if (!isMultiInput) {
+      container.innerHTML = `<div class="result-empty">Este reporte opera en modo legacy.</div>`;
+      renderNuevaSolicitudInputsSummary();
+      return;
+    }
+
+    if (nuevaSolicitudState.loading) {
+      status.textContent = "Cargando";
+      status.className = "badge badge--neutral";
+      help.textContent = "Consultando definiciones y archivos disponibles por input.";
+      container.innerHTML = `<div class="result-empty">Cargando inputs del reporte...</div>`;
+      renderNuevaSolicitudInputsSummary();
+      return;
+    }
+
+    status.textContent = `${nuevaSolicitudState.definitions.length} input(s)`;
+    status.className = "badge badge--multi-input";
+    help.textContent = "Los archivos se listan por input. El resumen inferior muestra lo ya seleccionado.";
+
+    if (!nuevaSolicitudState.definitions.length) {
+      container.innerHTML = `<div class="result-empty">Este reporte no expone inputs activos.</div>`;
+      renderNuevaSolicitudInputsSummary();
+      return;
+    }
+
+    container.innerHTML = nuevaSolicitudState.definitions.map((inputDef) => {
+      const inputId = inputDef.codigo_input;
+      const inputError = nuevaSolicitudState.errors?.[inputId] || "";
+      const currentValue = getNuevaSolicitudInputValue(inputId);
+      const requiredLabel = Number(inputDef.obligatorio) === 1 ? "Obligatorio" : "Opcional";
+
+      if (inputDef.tipo_input === "archivo") {
+        const cache = getNuevaSolicitudFileCache(inputId);
+        const options = cache.loading
+          ? `<option value="">Cargando archivos...</option>`
+          : !cache.items.length
+            ? `<option value="">No hay archivos disponibles</option>`
+            : `<option value="">Seleccione un archivo</option>` +
+              cache.items.map((file) => `
+                <option value="${esc(file.ruta_archivo)}" title="${esc(file.ruta_archivo)}" ${file.ruta_archivo === currentValue ? "selected" : ""}>
+                  ${esc(file.nombre_archivo || getFileName(file.ruta_archivo))}
+                </option>
+              `).join("");
+        const fileMessage = cache.error
+          ? `<p class="nueva-input-card__message is-warning">${esc(cache.error)}</p>`
+          : !cache.loading && !cache.items.length
+            ? `<p class="nueva-input-card__message is-warning">No hay archivos disponibles para este input.</p>`
+            : `<p class="nueva-input-card__message">Selecciona el archivo permitido para este input.</p>`;
+        const tipos = inputDef.tipos_permitidos ? `Extensiones: ${inputDef.tipos_permitidos}` : "Sin restricción de extensiones configurada";
+
+        return `
+          <div class="nueva-input-card" data-nueva-input-card="${esc(inputId)}">
+            <div class="nueva-input-card__header">
+              <div>
+                <h4 class="nueva-input-card__title">${esc(inputDef.nombre_visible)}</h4>
+                <p class="nueva-input-card__subtitle">${esc(tipos)}</p>
+              </div>
+              <div class="nueva-input-card__meta">
+                <span class="badge badge--neutral">Archivo</span>
+                <span class="badge ${Number(inputDef.obligatorio) === 1 ? "badge--multi-input" : "badge--neutral"}">${esc(requiredLabel)}</span>
+              </div>
+            </div>
+            <div class="nueva-input-card__body">
+              <select id="nuevaSolicitudInput_${esc(inputId)}" data-input-kind="archivo" data-codigo-input="${esc(inputId)}" ${cache.loading ? "disabled" : ""}>
+                ${options}
+              </select>
+              ${fileMessage}
+              <p id="nuevaSolicitudError_${esc(inputId)}" class="nueva-input-error">${esc(inputError)}</p>
+            </div>
+          </div>
+        `;
+      }
+
+      const placeholder = inputDef.tipo_input === "periodo" ? "YYYYMM" : "Ingresa un valor";
+      const helper = inputDef.tipo_input === "periodo"
+        ? "Usa 6 dígitos y un mes entre 01 y 12."
+        : "Valor libre complementario al resto de inputs.";
+
+      return `
+        <div class="nueva-input-card" data-nueva-input-card="${esc(inputId)}">
+          <div class="nueva-input-card__header">
+            <div>
+              <h4 class="nueva-input-card__title">${esc(inputDef.nombre_visible)}</h4>
+              <p class="nueva-input-card__subtitle">${esc(helper)}</p>
+            </div>
+            <div class="nueva-input-card__meta">
+              <span class="badge badge--neutral">${esc(getInputTypeLabel(inputDef.tipo_input))}</span>
+              <span class="badge ${Number(inputDef.obligatorio) === 1 ? "badge--multi-input" : "badge--neutral"}">${esc(requiredLabel)}</span>
+            </div>
+          </div>
+          <div class="nueva-input-card__body">
+            <input
+              id="nuevaSolicitudInput_${esc(inputId)}"
+              data-input-kind="${esc(inputDef.tipo_input)}"
+              data-codigo-input="${esc(inputId)}"
+              type="text"
+              maxlength="${inputDef.tipo_input === "periodo" ? "6" : "1000"}"
+              placeholder="${esc(placeholder)}"
+              value="${esc(currentValue)}"
+            />
+            <p id="nuevaSolicitudError_${esc(inputId)}" class="nueva-input-error">${esc(inputError)}</p>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    container.querySelectorAll("[data-codigo-input]").forEach((el) => {
+      const eventName = el.tagName === "SELECT" ? "change" : "input";
+      el.addEventListener(eventName, () => {
+        const codigoInput = el.dataset.codigoInput;
+        const value = el.value || "";
+        setNuevaSolicitudInputValue(codigoInput, value);
+        clearNuevaSolicitudInputError(codigoInput);
+        renderNuevaSolicitudInputsSummary();
+      });
+    });
+
+    renderNuevaSolicitudInputsSummary();
+  }
+
+  function renderNuevaSolicitudInputs() {
+    const nuevaSolicitudState = getNuevaSolicitudInputsState();
+    setNuevaSolicitudModeBadge(nuevaSolicitudState.modo, { loading: nuevaSolicitudState.loading });
+    renderLegacyInputSection();
+    renderMultiInputSection();
+  }
+
+  async function loadArchivosForInput(inputDef, options = {}) {
+    const force = !!options.force;
+    const reporteCodigo = ($("reporte")?.value || "").trim();
+    if (!reporteCodigo || inputDef?.tipo_input !== "archivo") return [];
+
+    const nuevaSolicitudState = getNuevaSolicitudInputsState();
+    const currentCache = getNuevaSolicitudFileCache(inputDef.codigo_input);
+    if (currentCache.loaded && !force) {
+      return currentCache.items || [];
+    }
+
+    nuevaSolicitudState.filesByInput = {
+      ...(nuevaSolicitudState.filesByInput || {}),
+      [inputDef.codigo_input]: {
+        ...currentCache,
+        loading: true,
+        error: "",
+      },
+    };
+    renderMultiInputSection();
+
+    try {
+      const data = await getArchivosInputReporte(reporteCodigo, inputDef.codigo_input);
+      const items = Array.isArray(data?.archivos) ? data.archivos : [];
+      const currentValue = (getNuevaSolicitudInputValue(inputDef.codigo_input) || "").trim();
+      if (currentValue && !items.some((file) => file.ruta_archivo === currentValue)) {
+        setNuevaSolicitudInputValue(inputDef.codigo_input, "");
+      }
+      nuevaSolicitudState.filesByInput[inputDef.codigo_input] = {
+        items,
+        loading: false,
+        error: "",
+        loaded: true,
+      };
+      return items;
+    } catch (e) {
+      nuevaSolicitudState.filesByInput[inputDef.codigo_input] = {
+        items: [],
+        loading: false,
+        error: e.message || "No se pudieron cargar archivos para este input.",
+        loaded: true,
+      };
+      return [];
+    } finally {
+      renderMultiInputSection();
+    }
+  }
+
+  async function loadInputsForSelectedReporte(options = {}) {
+    const reporteCodigo = ($("reporte")?.value || "").trim();
+    const forceFiles = !!options.forceFiles;
+
+    resetNuevaSolicitudInputsState();
+    renderNuevaSolicitudInputs();
+
+    if (!reporteCodigo) {
+      updateHintRutaInput();
+      return;
+    }
+
+    const nuevaSolicitudState = getNuevaSolicitudInputsState();
+    nuevaSolicitudState.loading = true;
+    setNuevaSolicitudModeBadge("loading");
+    renderNuevaSolicitudInputs();
+
+    try {
+      const data = await getReporteInputs(reporteCodigo);
+      const mode = data?.modo_inputs === "multi_input" ? "multi_input" : "legacy";
+      const definitions = Array.isArray(data?.inputs) ? data.inputs : [];
+
+      nuevaSolicitudState.modo = mode;
+      nuevaSolicitudState.definitions = definitions;
+      nuevaSolicitudState.errors = {};
+      nuevaSolicitudState.values = definitions.reduce((acc, inputDef) => {
+        acc[inputDef.codigo_input] = "";
+        return acc;
+      }, {});
+      nuevaSolicitudState.filesByInput = {};
+
+      if (mode === "legacy") {
+        nuevaSolicitudState.loading = false;
+        renderNuevaSolicitudInputs();
+        await cargarArchivosPermitidosDelReporte();
+        return;
+      }
+
+      renderNuevaSolicitudInputs();
+      await Promise.all(definitions
+        .filter((inputDef) => inputDef.tipo_input === "archivo")
+        .map((inputDef) => loadArchivosForInput(inputDef, { force: forceFiles })));
+    } catch (e) {
+      resetNuevaSolicitudInputsState();
+      setNuevaSolicitudModeBadge(null);
+      renderNuevaSolicitudInputs();
+      showAlert(`No se pudieron cargar inputs del reporte: ${e.message}`, "err");
+      return;
+    } finally {
+      const currentState = getNuevaSolicitudInputsState();
+      currentState.loading = false;
+      renderNuevaSolicitudInputs();
+      updateHintRutaInput();
+    }
+  }
+
+  function parseNuevaSolicitudParametros() {
+    const parametrosTxt = ($("parametros")?.value || "").trim();
+    if (!parametrosTxt) {
+      return { ok: true, parametros: {} };
+    }
+
+    const parsed = safeJsonParse(parametrosTxt, {});
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {
+        ok: false,
+        error: "Parámetros JSON inválidos. Debe ser un objeto JSON.",
+      };
+    }
+
+    const nuevaSolicitudState = getNuevaSolicitudInputsState();
+    const duplicatedKeys = Object.keys(parsed).filter((key) =>
+      (nuevaSolicitudState.definitions || []).some((inputDef) => inputDef.codigo_input === key)
+    );
+    if (duplicatedKeys.length) {
+      return {
+        ok: false,
+        error: `Los parámetros JSON no pueden repetir códigos de input: ${duplicatedKeys.join(", ")}.`,
+      };
+    }
+
+    return { ok: true, parametros: parsed };
+  }
+
+  function validateMultiInputValues() {
+    const nuevaSolicitudState = getNuevaSolicitudInputsState();
+    const errors = {};
+
+    (nuevaSolicitudState.definitions || []).forEach((inputDef) => {
+      const rawValue = getNuevaSolicitudInputValue(inputDef.codigo_input);
+      const value = (rawValue || "").trim();
+      const isRequired = Number(inputDef.obligatorio) === 1;
+
+      if (!value) {
+        if (isRequired) {
+          if (inputDef.tipo_input === "archivo") {
+            errors[inputDef.codigo_input] = "Selecciona un archivo para este input.";
+          } else if (inputDef.tipo_input === "periodo") {
+            errors[inputDef.codigo_input] = "Ingresa el periodo requerido con formato YYYYMM.";
+          } else {
+            errors[inputDef.codigo_input] = "Completa este input obligatorio.";
+          }
+        }
+        return;
+      }
+
+      if (inputDef.tipo_input === "periodo") {
+        const periodoError = validatePeriodoInputValue(value);
+        if (periodoError) {
+          errors[inputDef.codigo_input] = periodoError;
+        }
+        return;
+      }
+
+      if (inputDef.tipo_input === "archivo") {
+        const cache = getNuevaSolicitudFileCache(inputDef.codigo_input);
+        if (cache.loaded && cache.items.length && !cache.items.some((file) => file.ruta_archivo === value)) {
+          errors[inputDef.codigo_input] = "Selecciona un archivo válido de la lista disponible.";
+        }
+      }
+    });
+
+    nuevaSolicitudState.errors = errors;
+    renderMultiInputSection();
+    return {
+      ok: Object.keys(errors).length === 0,
+      errors,
+    };
+  }
+
+  function collectMultiInputValues() {
+    const nuevaSolicitudState = getNuevaSolicitudInputsState();
+    return (nuevaSolicitudState.definitions || []).reduce((acc, inputDef) => {
+      const rawValue = getNuevaSolicitudInputValue(inputDef.codigo_input);
+      const value = (rawValue || "").trim();
+      if (!value) return acc;
+
+      if (inputDef.tipo_input === "archivo") {
+        acc.push({
+          codigo_input: inputDef.codigo_input,
+          ruta_archivo: value,
+        });
+        return acc;
+      }
+
+      acc.push({
+        codigo_input: inputDef.codigo_input,
+        valor: value,
+      });
+      return acc;
+    }, []);
+  }
+
+  function applyNuevaSolicitudBackendInputErrors(message) {
+    const nuevaSolicitudState = getNuevaSolicitudInputsState();
+    const errorMessage = (message || "").trim();
+    if (!errorMessage || nuevaSolicitudState.modo !== "multi_input") return false;
+
+    const nextErrors = {};
+    (nuevaSolicitudState.definitions || []).forEach((inputDef) => {
+      if (errorMessage.toLowerCase().includes((inputDef.codigo_input || "").toLowerCase())) {
+        nextErrors[inputDef.codigo_input] = errorMessage;
+      }
+    });
+
+    if (!Object.keys(nextErrors).length) return false;
+    nuevaSolicitudState.errors = {
+      ...(nuevaSolicitudState.errors || {}),
+      ...nextErrors,
+    };
+    renderMultiInputSection();
+    return true;
+  }
+
   // ---------- Nueva solicitud ----------
   function setupNuevaSolicitud() {
     $("reporte").addEventListener("change", async () => {
-      updateHintRutaInput();
       updateParametrosEjemplo(getReporteByCodigo(($("reporte").value || "").trim()));
-      await cargarArchivosPermitidosDelReporte();
+      await loadInputsForSelectedReporte();
     });
     $("btn_cargar_archivos")?.addEventListener("click", async () => {
       try {
+        const nuevaSolicitudState = getNuevaSolicitudInputsState();
+        if (nuevaSolicitudState.modo === "multi_input") {
+          await Promise.all((nuevaSolicitudState.definitions || [])
+            .filter((inputDef) => inputDef.tipo_input === "archivo")
+            .map((inputDef) => loadArchivosForInput(inputDef, { force: true })));
+          showAlert("Archivos multi-input actualizados.", "info");
+          return;
+        }
         await cargarArchivosPermitidosDelReporte();
       } catch (e) {
         showAlert(`No se pudieron cargar archivos: ${e.message}`, "err");
@@ -766,60 +1932,50 @@
       ev.preventDefault();
 
       const reporte_codigo = $("reporte").value.trim();
-      const ruta_input_raw = $("ruta_input_select")?.value || "";
-      const parametros_txt = $("parametros").value.trim();
 
       if (!reporte_codigo) {
         showAlert("Selecciona un reporte.", "err");
         return;
       }
 
-      let parametros = {};
-      if (parametros_txt) {
-        const parsed = safeJsonParse(parametros_txt, {});
-        if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-          showAlert("Parámetros JSON inválidos. Debe ser un objeto JSON.", "err");
-          return;
-        }
-        parametros = parsed;
+      const nuevaSolicitudState = getNuevaSolicitudInputsState();
+      if (nuevaSolicitudState.loading || !nuevaSolicitudState.modo) {
+        showAlert("Espera a que termine de cargarse la configuración del reporte.", "err");
+        return;
       }
-
-      const payload = {
-        // usuario: sera tomado del token en backend
-        reporte_codigo,
-        ruta_input: ruta_input_raw.trim() || null,
-        parametros,
-        max_intentos: 2,
-      };
 
       try {
-        const out = await api("/solicitudes", {
-          method: "POST",
-          body: JSON.stringify(payload),
+        const parametrosResult = parseNuevaSolicitudParametros();
+        if (!parametrosResult.ok) {
+          showAlert(parametrosResult.error, "err");
+          return;
+        }
+
+        if (nuevaSolicitudState.modo === "multi_input") {
+          await submitSolicitudMultiInput({
+            reporte_codigo,
+            parametros: parametrosResult.parametros,
+          });
+          return;
+        }
+
+        await submitSolicitudLegacy({
+          reporte_codigo,
+          parametros: parametrosResult.parametros,
         });
-
-        state.selectedRequestId = out.request_id;
-        $("detalleRequestId").value = out.request_id;
-        renderResultNueva(out);
-        limpiarFormularioNuevaSolicitud(true);
-        closeNuevaModal();
-        showAlert(`Solicitud enviada: ${out.request_id}`, "ok");
-
-        // precargar usuario en filtros usando el usuario de la respuesta
-        $("fUsuario").value = out.usuario;
-
-        // refresca lista y detalle
-        await fetchMisSolicitudes();
-        await cargarDetalle(out.request_id);
       } catch (e) {
-        showAlert(`No se pudo crear solicitud: ${e.message}`, "err");
+        const mapped = applyNuevaSolicitudBackendInputErrors(e.message || "");
+        showAlert(`No se pudo crear solicitud${mapped ? " multi-input" : ""}: ${e.message}`, "err");
       }
     });
+
+    renderNuevaSolicitudInputs();
   }
 
   async function cargarArchivosPermitidosDelReporte() {
     const reporteSel = $("reporte");
     const sel = $("ruta_input_select");
+    const nuevaSolicitudState = getNuevaSolicitudInputsState();
 
     if (!reporteSel || !sel) return;
 
@@ -829,7 +1985,13 @@
     sel.innerHTML = `<option value="">Seleccione archivo...</option>`;
 
     if (!codigo) return;
+    if (nuevaSolicitudState.modo === "multi_input") {
+      renderLegacyInputSection();
+      return;
+    }
 
+    nuevaSolicitudState.loading = true;
+    renderLegacyInputSection();
     sel.innerHTML = `<option value="">Cargando archivos...</option>`;
 
     try {
@@ -850,6 +2012,9 @@
     } catch (e) {
       sel.innerHTML = `<option value="">Error cargando archivos</option>`;
       showAlert(`No se pudieron cargar archivos permitidos: ${e.message}`, "err");
+    } finally {
+      nuevaSolicitudState.loading = false;
+      renderLegacyInputSection();
     }
   }
 
@@ -857,6 +2022,7 @@
     $("formNueva").reset();
     $("parametros").value = "";
     state.lastParametrosEjemploAplicado = "";
+    resetNuevaSolicitudInputsState();
     $("ruta_input_select").innerHTML = `<option value="">Seleccione archivo...</option>`;
     if ($("archivos_help")) {
       $("archivos_help").textContent = "Opcional según reporte";
@@ -868,7 +2034,75 @@
     if (!preserveResult) {
       $("resultNueva").innerHTML = `<div class="result-empty">Formulario limpiado.</div>`;
     }
+    renderNuevaSolicitudInputs();
     updateHintRutaInput();
+  }
+
+  async function submitSolicitudLegacy({ reporte_codigo, parametros }) {
+    const ruta_input_raw = $("ruta_input_select")?.value || "";
+    const payload = {
+      reporte_codigo,
+      ruta_input: ruta_input_raw.trim() || null,
+      parametros,
+      max_intentos: 2,
+    };
+
+    const out = await api("/solicitudes", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+
+    await finalizeSolicitudCreada(out, {
+      successMessage: `Solicitud enviada: ${out.request_id}`,
+    });
+  }
+
+  async function submitSolicitudMultiInput({ reporte_codigo, parametros }) {
+    const nuevaSolicitudState = getNuevaSolicitudInputsState();
+    if (!(nuevaSolicitudState.definitions || []).length) {
+      showAlert("Este reporte no tiene inputs activos disponibles para el flujo multi-input.", "err");
+      return;
+    }
+
+    const validation = validateMultiInputValues();
+    if (!validation.ok) {
+      showAlert("Completa los inputs obligatorios y corrige los errores marcados.", "err");
+      return;
+    }
+
+    const payload = {
+      reporte_codigo,
+      inputs: collectMultiInputValues(),
+      parametros,
+      max_intentos: 2,
+    };
+
+    const out = await api("/solicitudes-v2", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+
+    await finalizeSolicitudCreada(out, {
+      successMessage: "Solicitud multi-input creada correctamente. El worker la tomará para ejecución.",
+    });
+  }
+
+  async function finalizeSolicitudCreada(out, options = {}) {
+    state.selectedRequestId = out.request_id;
+    $("detalleRequestId").value = out.request_id;
+    renderResultNueva(out);
+    limpiarFormularioNuevaSolicitud(true);
+    closeNuevaModal();
+    showAlert(options.successMessage || `Solicitud enviada: ${out.request_id}`, "ok", {
+      replace: true,
+    });
+
+    if ($("fUsuario")) {
+      $("fUsuario").value = out.usuario;
+    }
+
+    await fetchMisSolicitudes();
+    await cargarDetalle(out.request_id);
   }
 
   function renderResultNueva(out) {
@@ -1085,38 +2319,247 @@
 
     try {
       const [sol, eventos] = await Promise.all([
-        api(`/solicitudes/${encodeURIComponent(rid)}`),
+        api(`/solicitudes/${encodeURIComponent(rid)}/detalle`),
         api(`/solicitudes/${encodeURIComponent(rid)}/eventos`)
       ]);
       state.selectedRequestId = rid;
       renderDetalle(sol, eventos);
     } catch (e) {
       $("detalleResumen").innerHTML = `<div class="result-empty">No se pudo cargar detalle: ${esc(e.message)}</div>`;
+      $("detalleIntentos").innerHTML = `<div class="result-empty">Sin intentos.</div>`;
       $("detalleEventos").innerHTML = `<div class="result-empty">Sin eventos.</div>`;
       showAlert(`Error detalle: ${e.message}`, "err");
     }
   }
 
+  function attemptStatusPill(result) {
+    const normalized = String(result || "").toLowerCase();
+    if (normalized === "ok") return '<span class="status-pill status-OK">OK</span>';
+    if (normalized === "error" || normalized === "worker_error") return '<span class="status-pill status-ERROR">ERROR</span>';
+    if (normalized === "sin_resultado") return '<span class="status-pill status-EN_COLA">SIN RESULTADO</span>';
+    return '<span class="status-pill status-CANCELADO">N/D</span>';
+  }
+
+  function eventTypeBadge(type) {
+    const normalized = String(type || "").toUpperCase();
+    const statusClass = ["ERROR", "RESULTADO"].includes(normalized)
+      ? "status-ERROR"
+      : ["INTENTO", "EJECUCION"].includes(normalized)
+        ? "status-EJECUTANDO"
+        : normalized === "ESTADO"
+          ? "status-EN_COLA"
+          : "status-CANCELADO";
+    return `<span class="status-pill ${statusClass}">${esc(normalized || "INFO")}</span>`;
+  }
+
+  function renderJsonDetailBlock(value, emptyLabel) {
+    if (!value || (typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 0)) {
+      return `<span class="muted">${esc(emptyLabel)}</span>`;
+    }
+    return `<pre class="detail-json mono">${esc(JSON.stringify(value, null, 2))}</pre>`;
+  }
+
+  function renderTechnicalValue(value, emptyLabel = "-") {
+    if (value === null || value === undefined || value === "") {
+      return `<span class="muted">${esc(emptyLabel)}</span>`;
+    }
+    return `<div class="detail-technical mono">${esc(String(value))}</div>`;
+  }
+
+  function renderInputDetailList(inputsEnviados) {
+    if (!inputsEnviados.length) {
+      return `<span class="muted">No se registraron inputs estructurados.</span>`;
+    }
+
+    return `<div class="detail-input-list">${inputsEnviados.map((input) => {
+      const valorPrincipal = input.tipo_input === "archivo"
+        ? (input.ruta_archivo || input.valor || "-")
+        : (input.valor || "-");
+      return `
+        <div class="detail-input-list__item">
+          <div class="detail-input-list__title">
+            <strong>${esc(input.nombre_visible || input.codigo_input)}</strong>
+            <div class="detail-input-list__badges">
+              <span class="badge badge--neutral">${esc(getInputTypeLabel(input.tipo_input))}</span>
+              <span class="badge ${Number(input.obligatorio) === 1 ? "badge--multi-input" : "badge--neutral"}">${Number(input.obligatorio) === 1 ? "Obligatorio" : "Opcional"}</span>
+            </div>
+          </div>
+          <div class="detail-data-points">
+            <div class="detail-data-point">
+              <span class="detail-data-point__label">Código</span>
+              ${renderTechnicalValue(input.codigo_input)}
+            </div>
+            <div class="detail-data-point">
+              <span class="detail-data-point__label">Valor</span>
+              ${renderTechnicalValue(valorPrincipal)}
+            </div>
+            ${input.ruta_archivo ? `
+              <div class="detail-data-point detail-data-point--full">
+                <span class="detail-data-point__label">Ruta archivo</span>
+                ${renderTechnicalValue(input.ruta_archivo)}
+              </div>
+            ` : ""}
+            <div class="detail-data-point detail-data-point--full">
+              <span class="detail-data-point__label">Metadata</span>
+              ${renderJsonDetailBlock(input.metadata, "Sin metadata adicional")}
+            </div>
+          </div>
+        </div>
+      `;
+    }).join("")}</div>`;
+  }
+
+  function renderAttemptDetailList(intentos) {
+    if (!intentos.length) {
+      return `<div class="result-empty">Sin intentos registrados todavía.</div>`;
+    }
+
+    return intentos.map((intento) => {
+      const summaryItems = [
+        { label: "Modo", value: intento.modo_inputs || "-" },
+        { label: "Inputs", value: intento.input_count ?? "-" },
+        { label: "Returncode", value: intento.returncode ?? "-" },
+        { label: "Duración", value: intento.duration_sec != null ? `${Number(intento.duration_sec).toFixed(3)} s` : "-" },
+        { label: "Timed out", value: intento.timed_out == null ? "-" : (intento.timed_out ? "Sí" : "No") },
+      ];
+
+      const technicalBlocks = [
+        intento.log_path ? `
+          <div class="detail-attempt-block">
+            <h5>Log del intento</h5>
+            ${renderTechnicalValue(intento.log_path)}
+          </div>
+        ` : "",
+        intento.payload_path ? `
+          <div class="detail-attempt-block">
+            <h5>Payload temporal</h5>
+            ${renderTechnicalValue(intento.payload_path)}
+          </div>
+        ` : "",
+        intento.comando ? `
+          <div class="detail-attempt-block detail-attempt-block--full">
+            <h5>Comando construido</h5>
+            ${renderTechnicalValue(intento.comando)}
+          </div>
+        ` : "",
+        intento.payload_preview ? `
+          <div class="detail-attempt-block detail-attempt-block--full">
+            <h5>JSON temporal generado</h5>
+            ${renderJsonDetailBlock(intento.payload_preview, "Sin payload")}
+          </div>
+        ` : "",
+        intento.stdout_tail ? `
+          <div class="detail-attempt-block detail-attempt-block--full">
+            <h5>STDOUT resumido</h5>
+            <pre class="detail-json mono">${esc(intento.stdout_tail)}</pre>
+          </div>
+        ` : "",
+        intento.stderr_tail ? `
+          <div class="detail-attempt-block detail-attempt-block--full">
+            <h5>STDERR resumido</h5>
+            <pre class="detail-json mono">${esc(intento.stderr_tail)}</pre>
+          </div>
+        ` : "",
+        intento.worker_error ? `
+          <div class="detail-attempt-block detail-attempt-block--full">
+            <h5>Error del worker</h5>
+            <pre class="detail-json mono">${esc(intento.worker_error)}</pre>
+          </div>
+        ` : "",
+      ].filter(Boolean).join("");
+
+      return `
+        <article class="detail-attempt-card">
+          <div class="detail-attempt-card__header">
+            <div>
+              <h4>Intento ${esc(intento.intento)}</h4>
+              <p class="muted">Resumen operativo del intento ejecutado por el worker.</p>
+            </div>
+            ${attemptStatusPill(intento.estado_resultado)}
+          </div>
+          <div class="detail-data-points">
+            ${summaryItems.map((item) => `
+              <div class="detail-data-point">
+                <span class="detail-data-point__label">${esc(item.label)}</span>
+                <span>${esc(String(item.value))}</span>
+              </div>
+            `).join("")}
+          </div>
+          ${technicalBlocks ? `<div class="detail-attempt-grid">${technicalBlocks}</div>` : '<div class="detail-attempt-empty">Sin evidencia técnica adicional visible para este usuario.</div>'}
+        </article>
+      `;
+    }).join("");
+  }
+
   function renderDetalle(sol, eventos) {
     const outputPath = (sol.ruta_output || "").trim();
+    const modoInputs = sol.modo_inputs === "multi_input" ? "Multi-input" : "Legacy";
+    const inputsEnviados = Array.isArray(sol.inputs_enviados) ? sol.inputs_enviados : [];
+    const intentos = Array.isArray(sol.intentos_detalle) ? sol.intentos_detalle : [];
+    const parametros = renderJsonDetailBlock(sol.parametros, "Sin parámetros adicionales");
+    const inputsHtml = renderInputDetailList(inputsEnviados);
+    const outputHtml = renderTechnicalValue(outputPath, "Sin ruta de salida registrada");
+    const legacyHtml = `
+      <div class="detail-data-points">
+        <div class="detail-data-point detail-data-point--full">
+          <span class="detail-data-point__label">Ruta input legacy</span>
+          ${renderTechnicalValue(sol.ruta_input_legacy, "No aplica")}
+        </div>
+        <div class="detail-data-point detail-data-point--full">
+          <span class="detail-data-point__label">Parámetros JSON</span>
+          ${parametros}
+        </div>
+        ${sol.comando_ultimo ? `
+          <div class="detail-data-point detail-data-point--full">
+            <span class="detail-data-point__label">Último comando construido</span>
+            ${renderTechnicalValue(sol.comando_ultimo)}
+          </div>
+        ` : ""}
+      </div>
+    `;
+    const multiInputHtml = `
+      <div class="detail-data-points">
+        <div class="detail-data-point detail-data-point--full">
+          <span class="detail-data-point__label">Parámetros adicionales</span>
+          ${parametros}
+        </div>
+      </div>
+      <div class="detail-section-caption">Inputs enviados</div>
+      ${inputsHtml}
+    `;
+
     $("detalleResumen").innerHTML = `
       <div class="kv"><label>Request ID</label><div class="mono">${esc(sol.request_id)}</div></div>
       <div class="kv"><label>Reporte</label><div>${esc(sol.reporte_codigo)}</div></div>
       <div class="kv"><label>Usuario</label><div>${esc(sol.usuario)}</div></div>
+      <div class="kv"><label>Modo inputs</label><div>${esc(modoInputs)}</div></div>
       <div class="kv"><label>Estado</label><div>${statusPill(sol.estado)}</div></div>
       <div class="kv"><label>Progreso</label><div>${progressBar(sol.progreso)}</div></div>
-      <div class="kv"><label>Mensaje</label><div>${esc(sol.mensaje_estado || "-")}</div></div>
       <div class="kv"><label>Solicitado</label><div>${esc(fmtDate(sol.fecha_solicitud))}</div></div>
       <div class="kv"><label>Inicio</label><div>${esc(fmtDate(sol.fecha_inicio))}</div></div>
       <div class="kv"><label>Fin</label><div>${esc(fmtDate(sol.fecha_fin))}</div></div>
-      <div class="kv">
+      <div class="kv"><label>Intentos</label><div>${esc(`${sol.intentos_registrados} / ${sol.max_intentos}`)}</div></div>
+      <div class="kv"><label>Intento actual o último</label><div>${esc(sol.intento_actual_o_ultimo == null ? "-" : String(sol.intento_actual_o_ultimo))}</div></div>
+      <div class="kv kv--span-3"><label>Mensaje de estado</label><div>${esc(sol.mensaje_estado || "-")}</div></div>
+      <div class="kv kv--span-2">
         <label>Ruta output</label>
-        <div>${esc(outputPath || "-")}</div>
+        ${outputHtml}
         ${outputPath ? '<button id="btnCopyOutputPath" class="btn btn--ghost btn--sm" type="button" style="margin-top:8px;">Copiar ruta</button>' : ""}
       </div>
-      <div class="kv"><label>Error detalle</label><div>${esc(sol.error_detalle || "-")}</div></div>
       <div class="kv"><label>Última actualización</label><div>${esc(fmtDate(sol.updated_at))}</div></div>
+      <div class="kv kv--span-3">
+        <label>${sol.modo_inputs === "multi_input" ? "Solicitud multi-input" : "Solicitud legacy"}</label>
+        <div class="detail-section-body">
+          ${sol.modo_inputs === "multi_input" ? multiInputHtml : legacyHtml}
+        </div>
+      </div>
+      <div class="kv kv--span-3">
+        <label>Error detalle</label>
+        ${sol.error_detalle ? renderTechnicalValue(sol.error_detalle) : '<span class="muted">Sin error final registrado.</span>'}
+      </div>
     `;
+
+    $("detalleIntentos").innerHTML = renderAttemptDetailList(intentos);
 
     if (outputPath) {
       $("btnCopyOutputPath")?.addEventListener("click", () => copyOutputPath(outputPath));
@@ -1130,13 +2573,12 @@
     $("detalleEventos").innerHTML = eventos.map(ev => `
       <div class="tl-item">
         <div class="tl-item__meta">
-          <span><strong>${esc(ev.tipo_evento)}</strong></span>
-          <span>•</span>
+          ${eventTypeBadge(ev.tipo_evento)}
           <span>${esc(ev.origen || "-")}</span>
           <span>•</span>
           <span>${esc(fmtDate(ev.created_at))}</span>
         </div>
-        <div>${esc(ev.detalle || "-")}</div>
+        <div class="tl-item__body">${esc(ev.detalle || "-")}</div>
       </div>
     `).join("");
   }
@@ -1240,6 +2682,48 @@
 
   async function updateAdminRutaById(id, payload) {
     return api(`/admin/carpetas/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async function getAdminReporteInputs(reporteId) {
+    return api(`/admin/reportes/${encodeURIComponent(reporteId)}/inputs`);
+  }
+
+  async function createAdminReporteInput(reporteId, payload) {
+    return api(`/admin/reportes/${encodeURIComponent(reporteId)}/inputs`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async function updateAdminReporteInput(inputId, payload) {
+    return api(`/admin/reportes/inputs/${encodeURIComponent(inputId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async function deleteAdminReporteInput(inputId) {
+    return api(`/admin/reportes/inputs/${encodeURIComponent(inputId)}`, {
+      method: "DELETE",
+    });
+  }
+
+  async function getAdminInputCarpetas(inputId) {
+    return api(`/admin/reportes/inputs/${encodeURIComponent(inputId)}/carpetas`);
+  }
+
+  async function createAdminInputCarpeta(inputId, payload) {
+    return api(`/admin/reportes/inputs/${encodeURIComponent(inputId)}/carpetas`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async function updateAdminInputCarpeta(carpetaId, payload) {
+    return api(`/admin/reportes/inputs/carpetas/${encodeURIComponent(carpetaId)}`, {
       method: "PATCH",
       body: JSON.stringify(payload),
     });
@@ -1470,7 +2954,7 @@
     if (!tb || !status) return;
 
     if (!report?.codigo) {
-      status.textContent = "Guarda el reporte para habilitar esta sección.";
+      status.textContent = "Guarda el reporte para habilitar rutas legacy por reporte.";
       tb.innerHTML = `<tr><td colspan="4" class="table-empty">Guarda el reporte para administrar rutas.</td></tr>`;
       state.adminConfigurator.rutas = [];
       renderConfiguratorReview();
@@ -1479,7 +2963,7 @@
     }
 
     if (Number(report.requiere_input_archivo) !== 1) {
-      status.textContent = "Este reporte no requiere archivo de entrada.";
+      status.textContent = "Este reporte no requiere archivo de entrada en el flujo legacy.";
       tb.innerHTML = `<tr><td colspan="4" class="table-empty">No aplica porque el reporte no requiere archivo de entrada.</td></tr>`;
       state.adminConfigurator.rutas = [];
       renderConfiguratorReview();
@@ -1488,7 +2972,7 @@
     }
 
     tb.innerHTML = `<tr><td colspan="4" class="table-empty">Cargando rutas...</td></tr>`;
-    status.textContent = `Rutas permitidas para ${report.codigo}.`;
+    status.textContent = `Rutas legacy permitidas para ${report.codigo}.`;
 
     try {
       const rows = await getAdminRutasByCodigo(report.codigo);
@@ -1717,10 +3201,14 @@
 
     if (canUseAdvancedConfiguratorSteps()) {
       await Promise.all([
+        loadConfiguratorInputs(),
         loadConfiguratorRutas(),
         loadConfiguratorEquipos(),
       ]);
     } else {
+      resetConfiguratorInputsState();
+      renderConfiguratorInputs();
+      renderInputCarpetas();
       await loadConfiguratorRutas();
       state.adminReporteEquipoIds = [];
       renderConfiguratorEquiposChecks();
@@ -1732,12 +3220,16 @@
     resetAdminReporteModalForCreate();
     state.adminReporteEquipoIds = [];
     $("cfgRutaNueva").value = "";
+    closeConfiguratorInputForm();
+    if ($("cfgInputCarpetaNueva")) $("cfgInputCarpetaNueva").value = "";
     await hydrateConfiguratorForReport(null, { mode: "create", step: "datos" });
   }
 
   async function openReportConfiguratorEdit(row) {
     prepareAdminReporteModalForEdit(row);
     $("cfgRutaNueva").value = "";
+    closeConfiguratorInputForm();
+    if ($("cfgInputCarpetaNueva")) $("cfgInputCarpetaNueva").value = "";
     await hydrateConfiguratorForReport(row, { mode: "edit", step: "datos" });
   }
 
@@ -1842,7 +3334,7 @@
             ? "equipos"
             : (state.adminConfigurator.step || "datos")
         )
-        : (Number(payload.requiere_input_archivo) === 1 ? "rutas" : "equipos");
+        : "rutas";
       await hydrateConfiguratorForReport(out, {
         mode: id ? "edit" : "create",
         step: nextStep,
@@ -1867,15 +3359,18 @@
         showAlert("Primero guarda el reporte para continuar.", "err");
         return;
       }
-      if (isConfiguratorInputRequired()) {
-        setConfiguratorStep("rutas");
-        await loadConfiguratorRutas();
-        return;
-      }
-      setConfiguratorStep("equipos");
-      await loadConfiguratorEquipos();
+      setConfiguratorStep("rutas");
+      await Promise.all([
+        loadConfiguratorInputs(),
+        loadConfiguratorRutas(),
+      ]);
     });
     $("btnCfgAgregarRuta")?.addEventListener("click", addConfiguratorRuta);
+    $("btnCfgOpenInputForm")?.addEventListener("click", openInputFormForCreate);
+    $("btnCfgCancelInputForm")?.addEventListener("click", closeConfiguratorInputForm);
+    $("cfgInputTipo")?.addEventListener("change", syncConfiguratorInputForm);
+    $("cfgInputForm")?.addEventListener("submit", saveConfiguratorInput);
+    $("btnCfgAgregarInputCarpeta")?.addEventListener("click", addInputCarpeta);
     $("btnCfgGoToEquipos")?.addEventListener("click", async () => {
       setConfiguratorStep("equipos");
       await loadConfiguratorEquipos();
@@ -1894,7 +3389,12 @@
       btn.addEventListener("click", async () => {
         const step = btn.dataset.configStep;
         setConfiguratorStep(step);
-        if (step === "rutas") await loadConfiguratorRutas();
+        if (step === "rutas") {
+          await Promise.all([
+            loadConfiguratorInputs(),
+            loadConfiguratorRutas(),
+          ]);
+        }
         if (step === "equipos") await loadConfiguratorEquipos();
         if (step === "revision") renderConfiguratorReview();
       });

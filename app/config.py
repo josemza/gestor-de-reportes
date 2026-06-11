@@ -20,6 +20,7 @@ class Settings(BaseModel):
     WORKER_LOCK_HEARTBEAT_SECONDS: int = Field(default=10)
     WORKER_LOCK_STALE_SECONDS: int = Field(default=60)
     WORKER_LOG_DIR: str = Field(default="./runtime/worker_logs")
+    WORKER_PAYLOAD_DIR: str = Field(default="./runtime/worker_payloads")
     WORKER_USE_SHELL: bool = Field(default=True)
     WORKER_ACTIVE_START_HOUR: int = Field(default=0)
     WORKER_ACTIVE_END_HOUR: int = Field(default=0)
@@ -52,6 +53,17 @@ class Settings(BaseModel):
             raise ValueError(f"WORKER_POLL_SECONDS invalido: {v!r}. Debe ser entero.")
         if v < 1:
             raise ValueError("WORKER_POLL_SECONDS debe ser >= 1")
+        return v
+
+    @field_validator("WORKER_JOB_TIMEOUT_SECONDS", "JWT_ACCESS_TOKEN_MINUTES", mode="before")
+    @classmethod
+    def validate_positive_seconds(cls, v: int) -> int:
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            raise ValueError(f"Valor invalido: {v!r}. Debe ser entero.")
+        if v < 1:
+            raise ValueError("El valor debe ser >= 1")
         return v
 
     @field_validator("WORKER_LOCK_HEARTBEAT_SECONDS", "WORKER_LOCK_STALE_SECONDS", mode="before")
@@ -106,13 +118,14 @@ def get_settings() -> Settings:
     raw = {
         "APP_NAME": _env("APP_NAME", "Reporteador GCI"),
         "API_HOST": _env("API_HOST", "0.0.0.0"),
-        "API_PORT": _env("API_PORT", "8000"),
+        "API_PORT": _env("API_PORT", "8037"),
         "WORKER_POLL_SECONDS": _env("WORKER_POLL_SECONDS", "3"),
         "WORKER_ID": _env("WORKER_ID","worker-01"),
         "WORKER_JOB_TIMEOUT_SECONDS": _env("WORKER_JOB_TIMEOUT_SECONDS", "3600"),
         "WORKER_LOCK_HEARTBEAT_SECONDS": _env("WORKER_LOCK_HEARTBEAT_SECONDS", "10"),
         "WORKER_LOCK_STALE_SECONDS": _env("WORKER_LOCK_STALE_SECONDS", "60"),
         "WORKER_LOG_DIR": _env("WORKER_LOG_DIR", "./runtime/worker_logs"),
+        "WORKER_PAYLOAD_DIR": _env("WORKER_PAYLOAD_DIR", "./runtime/worker_payloads"),
         "WORKER_USE_SHELL": _env("WORKER_USE_SHELL", "true"),
         "WORKER_ACTIVE_START_HOUR": _env("WORKER_ACTIVE_START_HOUR", "0"),
         "WORKER_ACTIVE_END_HOUR": _env("WORKER_ACTIVE_END_HOUR", "0"),
@@ -126,5 +139,30 @@ def get_settings() -> Settings:
         return Settings(**raw)
     except ValidationError as e:
         raise RuntimeError(f"Error de configuracion: {e}") from e
+
+
+def resolve_project_path(raw_path: str) -> Path:
+    path = Path(raw_path).expanduser()
+    if not path.is_absolute():
+        path = BASE_DIR / path
+    return path.resolve()
+
+
+def ensure_directory(raw_path: str, *, label: str) -> Path:
+    path = resolve_project_path(raw_path)
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise RuntimeError(
+            f"No se pudo crear o validar el directorio configurado para {label}: {path} ({e})"
+        ) from e
+
+    if not path.is_dir():
+        raise RuntimeError(f"La ruta configurada para {label} no es un directorio: {path}")
+
+    if not os.access(path, os.W_OK):
+        raise RuntimeError(f"El directorio configurado para {label} no tiene permisos de escritura: {path}")
+
+    return path
     
 settings = get_settings()
