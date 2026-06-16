@@ -401,59 +401,98 @@ def list_solicitudes_usuario(db: Session, usuario: str, limit: int = 100) -> lis
     return list(db.execute(q).scalars())
 
 
-def take_next_job_atomically_oracle(db: Session, worker_id: str) -> Solicitud | None:
+def _db_dialect_name(db: Session) -> str:
+    bind = db.get_bind()
+    return getattr(getattr(bind, "dialect", None), "name", "") or ""
+
+
+def take_next_job_atomically_oracle(
+    db: Session,
+    worker_id: str,
+    lock_stale_seconds: int = 60,
+) -> Solicitud | None:
     """
-    Oracle-friendly: FOR UPDATE SKIP LOCKED para que múltiples workers no colisionen.
+    Oracle-friendly: evita LIMIT 1 y mantiene el lock por REPORTE_ID.
     """
-    # 1) tomar un id candidate bloqueándolo
-    row = db.execute(text("""
-        SELECT ROWID AS rid, SOLICITUD_ID
-        FROM SOLICITUDES_REP_GCI
-        WHERE ESTADO IN ('EN_COLA', 'PENDIENTE_ADAPTACION_WORKER')
-        ORDER BY FECHA_SOLICITUD, SOLICITUD_ID
-        FOR UPDATE SKIP LOCKED
-    """)).first()
+    max_attempts = 5
 
-    if not row:
-        db.rollback()
-        return None
+    for _ in range(max_attempts):
+        cleanup_stale_reporte_locks(db, stale_after_seconds=lock_stale_seconds)
+        db.commit()
 
-    rid = row.rid
-    solicitud_id = int(row.solicitud_id)
+        now = datetime.now(timezone.utc)
+        alive_since = datetime.fromtimestamp(
+            now.timestamp() - lock_stale_seconds,
+            tz=timezone.utc,
+        )
 
-    # 2) actualizar estado dentro de la misma transacción
-    now = datetime.now(timezone.utc)
-    db.execute(text(
-        """
-        UPDATE SOLICITUDES_REP_GCI
-        SET ESTADO = 'EJECUTANDO',
-            PROGRESO = 10,
-            MENSAJE_ESTADO = :msg,
-            FECHA_INICIO = :fecha_inicio,
-            UPDATED_AT = :updated_at
-        WHERE ROWID = :rid
-        """
-    ), {
-        "msg": f"Tomada por worker {worker_id}",
-        "fecha_inicio": now,
-        "updated_at": now,
-        "rid": rid,
-    })
-    
-    add_evento(db, solicitud_id, "ESTADO", "EJECUTANDO", "WORKER")
-    db.commit()
+        row = db.execute(text("""
+            SELECT s.ROWID AS rid, s.SOLICITUD_ID, s.REPORTE_ID
+            FROM SOLICITUDES_REP_GCI s
+            LEFT JOIN REPORTE_LOCKS_REP_GCI l
+                ON l.REPORTE_ID = s.REPORTE_ID
+               AND l.HEARTBEAT_AT >= :alive_since
+            WHERE s.ESTADO IN ('EN_COLA', 'PENDIENTE_ADAPTACION_WORKER')
+              AND l.REPORTE_ID IS NULL
+            ORDER BY s.FECHA_SOLICITUD ASC, s.SOLICITUD_ID ASC
+            FOR UPDATE SKIP LOCKED
+        """), {"alive_since": alive_since}).first()
 
-    s = db.execute(
-        select(Solicitud).where(Solicitud.id == solicitud_id)
-    ).scalar_one_or_none()
+        if not row:
+            db.rollback()
+            return None
 
-    return s
+        rid = row.RID if hasattr(row, "RID") else row.rid
+        solicitud_id = int(row.SOLICITUD_ID if hasattr(row, "SOLICITUD_ID") else row.solicitud_id)
+        reporte_id = int(row.REPORTE_ID if hasattr(row, "REPORTE_ID") else row.reporte_id)
+
+        if not try_acquire_reporte_lock(
+            db=db,
+            reporte_id=reporte_id,
+            solicitud_id=solicitud_id,
+            worker_id=worker_id,
+        ):
+            db.rollback()
+            continue
+
+        db.execute(text(
+            """
+            UPDATE SOLICITUDES_REP_GCI
+            SET ESTADO = 'EJECUTANDO',
+                PROGRESO = 10,
+                MENSAJE_ESTADO = :msg,
+                FECHA_INICIO = :fecha_inicio,
+                UPDATED_AT = :updated_at
+            WHERE ROWID = :rid
+            """
+        ), {
+            "msg": f"Tomada por worker {worker_id}",
+            "fecha_inicio": now,
+            "updated_at": now,
+            "rid": rid,
+        })
+        add_evento(db, solicitud_id, "ESTADO", "EJECUTANDO", "WORKER")
+        db.commit()
+
+        return db.execute(
+            select(Solicitud).where(Solicitud.id == solicitud_id)
+        ).scalar_one_or_none()
+
+    db.rollback()
+    return None
 
 def take_next_job_atomically(db: Session, worker_id: str, lock_stale_seconds: int = 60) -> Solicitud | None:
     """
     MariaDB-friendly: Usa FOR UPDATE SKIP LOCKED (requiere MariaDB 10.6+)
     y reemplaza ROWID por la clave primaria.
     """
+    if _db_dialect_name(db) == "oracle":
+        return take_next_job_atomically_oracle(
+            db=db,
+            worker_id=worker_id,
+            lock_stale_seconds=lock_stale_seconds,
+        )
+
     max_attempts = 5
 
     for _ in range(max_attempts):

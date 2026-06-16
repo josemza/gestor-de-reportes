@@ -58,7 +58,14 @@ logger = setup_logger()
 
 
 def ensure_lock_table():
-    ReporteLock.__table__.create(bind=engine, checkfirst=True)
+    try:
+        ReporteLock.__table__.create(bind=engine, checkfirst=True)
+    except Exception as exc:
+        raise RuntimeError(
+            "No se pudo validar o crear REPORTE_LOCKS_REP_GCI. "
+            "En Oracle esto suele indicar que la tabla no existe en el esquema objetivo "
+            "o que el usuario no tiene permisos de inspección/DDL."
+        ) from exc
 
 
 # ----------------------------
@@ -705,9 +712,11 @@ def process_job(db: Session, job: Solicitud):
 
 def main():
     ensure_lock_table()
+    db_dialect = getattr(getattr(engine, "dialect", None), "name", "unknown")
     logger.info(
-        "Worker iniciado | id=%s | poll=%ss | horario=%02d:00-%02d:00 | timezone=%s | payload_dir=%s",
+        "Worker iniciado | id=%s | db_dialect=%s | poll=%ss | horario=%02d:00-%02d:00 | timezone=%s | payload_dir=%s",
         WORKER_ID,
+        db_dialect,
         settings.WORKER_POLL_SECONDS,
         settings.WORKER_ACTIVE_START_HOUR,
         settings.WORKER_ACTIVE_END_HOUR,
