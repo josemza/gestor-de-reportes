@@ -203,4 +203,31 @@ test.describe("QA visual multiple inputs", () => {
     expect.soft(issues.pageErrors, "No deben existir page errors críticos en la navegación autenticada").toEqual([]);
     expect.soft(issues.failedRequests, "No deben existir respuestas 5xx críticas durante la navegación").toEqual([]);
   });
+
+  test("logout detiene polling autenticado y no muestra unauthorized repetido", async ({ page }) => {
+    test.skip(!E2E_USER || !E2E_PASSWORD, "Faltan E2E_USER y/o E2E_PASSWORD para QA autenticado.");
+    test.setTimeout(60_000);
+
+    const unauthorizedResponses: string[] = [];
+
+    page.on("response", async (response) => {
+      if (response.status() === 401) {
+        unauthorizedResponses.push(response.url());
+      }
+    });
+
+    await loginAsAdmin(page);
+    await expect(page.locator("#tbodyMis")).toBeVisible();
+    await page.waitForTimeout(2_000);
+
+    await page.locator("#btnLogout").click();
+    await expect(page.getByRole("heading", { name: "Centro de Reportes" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Entrar" })).toBeVisible();
+
+    await page.waitForTimeout(7_000);
+
+    await expect(page.locator("#toastContainer")).not.toContainText(/Unauthorized/i);
+    await expect(page.locator("#toastContainer")).not.toContainText(/sesion expirada|sesión expirada/i);
+    expect.soft(unauthorizedResponses, "No deben aparecer respuestas 401 despues del logout manual.").toEqual([]);
+  });
 });

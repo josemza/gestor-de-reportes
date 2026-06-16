@@ -24,10 +24,22 @@
     admEquipoCurrentPage: 1,
     admEquipoPageSize: 10,
     me: null,
-    autoRefreshTimer: null,
     apiBase: window.location.origin,
     selectedRequestId: null,
     lastParametrosEjemploAplicado: "",
+    auth: {
+      token: null,
+      user: null,
+      isAuthenticated: false,
+      sessionExpiredNotified: false,
+      logoutInProgress: false,
+      requestVersion: 0,
+    },
+    timers: {
+      authenticated: {
+        autoRefresh: null,
+      },
+    },
     nuevaSolicitudInputs: {
       modo: null,
       definitions: [],
@@ -83,14 +95,24 @@
   const VERSION_ENDPOINT = "/version";
   const VERSION_POLL_INTERVAL_MS = 60000;
   const VERSION_UPDATE_TOAST_ID = "app-version-update";
+  const LOGOUT_TOAST_ID = "auth-logout";
+  const SESSION_EXPIRED_TOAST_ID = "auth-session-expired";
+  const AUTH_CANCELLED_MESSAGE = "__auth_request_cancelled__";
+  const PUBLIC_API_PATHS = new Set(["/auth/login", "/health", VERSION_ENDPOINT]);
 
   function getToken() {
     return localStorage.getItem(AUTH_STORAGE_KEY);
   }
 
+  function isAuthenticated() {
+    return Boolean(getToken());
+  }
+
   function setToken(token) {
     if (token) localStorage.setItem(AUTH_STORAGE_KEY, token);
     else localStorage.removeItem(AUTH_STORAGE_KEY);
+    state.auth.token = token || null;
+    state.auth.isAuthenticated = Boolean(token);
   }
 
   function showLoginView(errorMessage) {
@@ -114,6 +136,8 @@
 
   function setAuthUI(me) {
     state.me = me || null;
+    state.auth.user = me || null;
+    state.auth.isAuthenticated = isAuthenticated();
     $("authUser").innerText = me?.username ? me.username : "-";
     const isAdmin = me?.roles?.includes("ADMIN") || me?.username === "admin";
 
@@ -144,6 +168,148 @@
         fUsuario.title = "Solo los administradores pueden cambiar este filtro.";
       }
     }
+  }
+
+  function isPublicApiPath(path) {
+    return PUBLIC_API_PATHS.has(path);
+  }
+
+  function createSilentAuthError() {
+    const err = new Error(AUTH_CANCELLED_MESSAGE);
+    err.code = "AUTH_REQUEST_CANCELLED";
+    err.silent = true;
+    return err;
+  }
+
+  function isSilentAuthError(error) {
+    return Boolean(
+      error?.silent ||
+      error?.code === "AUTH_REQUEST_CANCELLED" ||
+      error?.message === AUTH_CANCELLED_MESSAGE
+    );
+  }
+
+  function clearAuthenticatedTimer(name) {
+    const timerId = state.timers.authenticated[name];
+    if (timerId) {
+      window.clearInterval(timerId);
+      state.timers.authenticated[name] = null;
+    }
+  }
+
+  function registerAuthenticatedTimer(name, callback, intervalMs) {
+    clearAuthenticatedTimer(name);
+    if (!isAuthenticated()) return null;
+    const timerId = window.setInterval(() => {
+      if (!isAuthenticated()) return;
+      void callback();
+    }, intervalMs);
+    state.timers.authenticated[name] = timerId;
+    return timerId;
+  }
+
+  function stopAuthenticatedPollers() {
+    Object.keys(state.timers.authenticated).forEach(clearAuthenticatedTimer);
+  }
+
+  function resetProtectedUiState() {
+    state.reportes = [];
+    state.misSolicitudes = [];
+    state.adminReportes = [];
+    state.adminReportesAll = [];
+    state.adminUsuarios = [];
+    state.adminEquipos = [];
+    state.adminUsuarioEquipoIds = [];
+    state.adminReporteEquipoIds = [];
+    state.adminTablasConsulta = [];
+    state.adminTablaConsultaEquipoIds = [];
+    state.consultaTablasDisponibles = [];
+    state.consultaTablaResultadoCols = [];
+    state.selectedRequestId = null;
+    state.misCurrentPage = 1;
+    state.me = null;
+
+    resetNuevaSolicitudInputsState();
+    resetConfiguratorInputsState();
+
+    if ($("reporte")) {
+      $("reporte").innerHTML = `<option value="">Inicia sesión para ver reportes</option>`;
+      $("reporte").value = "";
+    }
+    if ($("tbodyMis")) {
+      $("tbodyMis").innerHTML = `<tr><td colspan="8" class="table-empty">Inicia sesión para consultar solicitudes.</td></tr>`;
+    }
+    updateMisPaginationControls(1, 1, 0);
+    if ($("detalleRequestId")) $("detalleRequestId").value = "";
+    if ($("detalleResumen")) $("detalleResumen").innerHTML = `<div class="result-empty">Inicia sesión para ver el detalle.</div>`;
+    if ($("detalleIntentos")) $("detalleIntentos").innerHTML = `<div class="result-empty">Sin intentos.</div>`;
+    if ($("detalleEventos")) $("detalleEventos").innerHTML = `<div class="result-empty">Sin eventos.</div>`;
+    if ($("tbodyAdminReportes")) {
+      $("tbodyAdminReportes").innerHTML = `<tr><td colspan="6" class="table-empty">Inicia sesión para cargar datos.</td></tr>`;
+    }
+    if ($("tbodyAdmCt")) {
+      $("tbodyAdmCt").innerHTML = `<tr><td colspan="6" class="table-empty">Inicia sesión para cargar datos.</td></tr>`;
+    }
+    if ($("tbodyUsuarios")) {
+      $("tbodyUsuarios").innerHTML = `<tr><td colspan="5" class="table-empty">Inicia sesión para cargar datos.</td></tr>`;
+    }
+
+    closeNuevaModal();
+    closeAdminReporteModal();
+    closeAdminEquipoModal();
+    closeAdminUsuarioEquiposModal();
+    closeAdminTablaConsultaModal();
+    closeConsultaResultadosModal();
+    renderNuevaSolicitudInputs();
+    updateHintRutaInput();
+  }
+
+  function startAuthenticatedPollers() {
+    setupAutoRefresh();
+  }
+
+  function logout(options = {}) {
+    const { silent = false, loginMessage = "", preserveSessionExpiredNotice = false } = options;
+
+    state.auth.logoutInProgress = true;
+    state.auth.requestVersion += 1;
+    stopAuthenticatedPollers();
+    setToken(null);
+    if (!preserveSessionExpiredNotice) {
+      state.auth.sessionExpiredNotified = false;
+    }
+    resetProtectedUiState();
+    setAuthUI(null);
+    showLoginView(loginMessage);
+
+    if (!silent) {
+      showAlert("Sesion cerrada.", "info", {
+        id: LOGOUT_TOAST_ID,
+        replaceTypes: ["info"],
+      });
+    }
+  }
+
+  function handleUnauthorized(detail = "No autenticado") {
+    if (!isAuthenticated()) {
+      stopAuthenticatedPollers();
+      throw createSilentAuthError();
+    }
+
+    if (!state.auth.sessionExpiredNotified) {
+      state.auth.sessionExpiredNotified = true;
+      showAlert("Tu sesion expiro. Vuelve a iniciar sesion.", "warning", {
+        id: SESSION_EXPIRED_TOAST_ID,
+        replaceTypes: ["warning", "error"],
+      });
+    }
+
+    logout({
+      silent: true,
+      loginMessage: `Sesion expirada o invalida. Por favor, ingresa de nuevo. (Detalle: ${detail})`,
+      preserveSessionExpiredNotice: true,
+    });
+    throw createSilentAuthError();
   }
 
   function setSidebarCollapsed(collapsed) {
@@ -1182,6 +1348,9 @@
   }
 
   function showAlert(message, type = "info", options = {}) {
+    if (typeof message === "string" && message.includes(AUTH_CANCELLED_MESSAGE)) {
+      return null;
+    }
     return showToast(message, type, options);
   }
 
@@ -1270,7 +1439,14 @@
   }
 
   async function api(path, opts = {}) {
+    const requiresAuth = opts.requiresAuth !== false && !isPublicApiPath(path);
+    const { requiresAuth: _requiresAuth, ...fetchOpts } = opts;
     const token = getToken();
+    const requestVersion = state.auth.requestVersion;
+
+    if (requiresAuth && !token) {
+      throw createSilentAuthError();
+    }
 
     const headers = {
       "Content-Type": "application/json",
@@ -1280,21 +1456,23 @@
     if (token) headers["Authorization"] = `Bearer ${token}`;
 
     const res = await fetch(`${state.apiBase}${path}`, {
-      ...opts,
+      ...fetchOpts,
       headers,
     });
 
+    if (requiresAuth && (requestVersion !== state.auth.requestVersion || token !== getToken())) {
+      throw createSilentAuthError();
+    }
+
     if (!res.ok) {
-      // Si expira token o es inválido
-      if (res.status === 401) {
+      if (res.status === 401 && requiresAuth) {
         let detail = "No autenticado";
         try {
           const b = await res.json();
           detail = b.detail;
-        } catch (e) { /* ignore */ }
-        
-        setToken(null);
-        showLoginView(`Sesión expirada o inválida. Por favor, ingrese de nuevo. (Detalle: ${detail})`);
+        } catch (_) { /* ignore */ }
+
+        handleUnauthorized(detail);
       }
 
       let detail = `HTTP ${res.status}`;
@@ -1347,6 +1525,10 @@
   async function loadReportes() {
     const sel = $("reporte");
     if (!sel) return;
+    if (!isAuthenticated()) {
+      sel.innerHTML = `<option value="">Inicia sesion para ver reportes</option>`;
+      return;
+    }
 
     sel.innerHTML = `<option value="">Cargando...</option>`;
     try {
@@ -1369,6 +1551,7 @@
       // Also update admin dropdown
       fillAdminReportesSelect();
     } catch (e) {
+      if (isSilentAuthError(e)) return;
       sel.innerHTML = `<option value="">Error al cargar reportes</option>`;
       resetNuevaSolicitudInputsState();
       renderNuevaSolicitudInputs();
@@ -2279,6 +2462,8 @@
   }
 
   async function fetchMisSolicitudes() {
+    if (!isAuthenticated()) return;
+
     const isAdmin = state.me?.roles?.includes("ADMIN") || state.me?.username === "admin";
     const usuarioInput = $("fUsuario")?.value?.trim() || "";
     const usuario = isAdmin ? usuarioInput : (state.me?.username || usuarioInput);
@@ -2319,6 +2504,7 @@
         Number(result?.total || 0)
       );
     } catch (e) {
+      if (isSilentAuthError(e)) return;
       showAlert(`Error consultando solicitudes: ${e.message}`, "err");
     }
   }
@@ -2406,6 +2592,7 @@
 
     $("btnRefreshAll").addEventListener("click", async () => {
       await loadHealth();
+      if (!isAuthenticated()) return;
       await loadReportes();
       await fetchMisSolicitudes();
       await loadAdminReportes();
@@ -2422,12 +2609,10 @@
   }
 
   function setupAutoRefresh() {
-    if (state.autoRefreshTimer) {
-      clearInterval(state.autoRefreshTimer);
-      state.autoRefreshTimer = null;
-    }
+    clearAuthenticatedTimer("autoRefresh");
+    if (!isAuthenticated()) return;
     if ($("autoRefresh").checked) {
-      state.autoRefreshTimer = setInterval(async () => {
+      registerAuthenticatedTimer("autoRefresh", async () => {
         await fetchMisSolicitudes();
         if (state.selectedRequestId) await cargarDetalle(state.selectedRequestId);
       }, 5000);
@@ -2436,6 +2621,8 @@
 
   // ---------- Detalle ----------
   async function cargarDetalle(requestId) {
+    if (!isAuthenticated()) return;
+
     const rid = (requestId || $("detalleRequestId").value || "").trim();
     if (!rid) {
       showAlert("Ingresa un Request ID.", "err");
@@ -2450,6 +2637,7 @@
       state.selectedRequestId = rid;
       renderDetalle(sol, eventos);
     } catch (e) {
+      if (isSilentAuthError(e)) return;
       $("detalleResumen").innerHTML = `<div class="result-empty">No se pudo cargar detalle: ${esc(e.message)}</div>`;
       $("detalleIntentos").innerHTML = `<div class="result-empty">Sin intentos.</div>`;
       $("detalleEventos").innerHTML = `<div class="result-empty">Sin eventos.</div>`;
@@ -2769,7 +2957,10 @@
 
   async function bootstrapAuth() {
     const token = getToken();
+    state.auth.token = token;
+    state.auth.isAuthenticated = Boolean(token);
     if (!token) {
+      stopAuthenticatedPollers();
       showLoginView();
       return;
     }
@@ -2777,9 +2968,12 @@
     try {
       const me = await api("/auth/me");
       setAuthUI(me);
+      state.auth.logoutInProgress = false;
+      state.auth.sessionExpiredNotified = false;
       if (me.username) $("fUsuario").value = me.username;
 
       showAppView();
+      startAuthenticatedPollers();
 
       // Load initial dashboard data
       await loadReportes();
@@ -2790,8 +2984,8 @@
       await loadConsultaTablasDisponibles();
       await fetchUsuariosAdmin();
     } catch (e) {
-      setToken(null);
-      showLoginView();
+      if (isSilentAuthError(e)) return;
+      logout({ silent: true });
     }
   }
 
@@ -3211,6 +3405,7 @@
   async function loadAdminReportes() {
     const tb = $("tbodyAdminReportes");
     if (!tb) return;
+    if (!isAuthenticated()) return;
 
     const isAdmin = state.me?.roles?.includes("ADMIN") || state.me?.username === "admin";
     if (!isAdmin) {
@@ -3241,6 +3436,7 @@
       );
       await refreshAdminReportesAll();
     } catch (e) {
+      if (isSilentAuthError(e)) return;
       tb.innerHTML = `<tr><td colspan="6" class="table-empty">Error al cargar reportes.</td></tr>`;
       showAlert(`No se pudieron cargar reportes admin: ${e.message}`, "err");
     }
@@ -4220,6 +4416,8 @@
   }
 
   async function loadAdminEquiposData() {
+    if (!isAuthenticated()) return;
+
     const isAdmin = isAdminUser();
     if (!isAdmin) return;
 
@@ -4251,6 +4449,7 @@
       renderConfiguratorEquiposChecks();
       renderAdmCtEquiposChecks();
     } catch (e) {
+      if (isSilentAuthError(e)) return;
       showAlert(`No se pudo cargar administración de equipos: ${e.message}`, "err");
     }
   }
@@ -4584,6 +4783,8 @@
   }
 
   async function loadConsultaTablasDisponibles() {
+    if (!isAuthenticated()) return;
+
     try {
       const rows = await api("/consulta-tablas/disponibles");
       state.consultaTablasDisponibles = rows || [];
@@ -4593,6 +4794,7 @@
       renderConsultaResultados(null);
       if ($("ctInfo")) $("ctInfo").textContent = `${state.consultaTablasDisponibles.length} tabla(s) disponibles`;
     } catch (e) {
+      if (isSilentAuthError(e)) return;
       showAlert(`No se pudieron cargar tablas permitidas: ${e.message}`, "err");
     }
   }
@@ -4949,6 +5151,7 @@
   async function loadAdminTablasConsulta() {
     const tb = $("tbodyAdmCt");
     if (!tb) return;
+    if (!isAuthenticated()) return;
 
     const isAdmin = state.me?.roles?.includes("ADMIN") || state.me?.username === "admin";
     if (!isAdmin) {
@@ -4977,6 +5180,7 @@
         Number(out?.total || 0)
       );
     } catch (e) {
+      if (isSilentAuthError(e)) return;
       tb.innerHTML = `<tr><td colspan="6" class="table-empty">Error al cargar tablas.</td></tr>`;
       showAlert(`No se pudo cargar whitelist de tablas: ${e.message}`, "err");
     }
@@ -5201,6 +5405,7 @@
   async function fetchUsuariosAdmin() {
     const tb = $("tbodyUsuarios");
     if (!tb) return;
+    if (!isAuthenticated()) return;
 
     const isAdmin = state.me?.roles?.includes("ADMIN") || state.me?.username === "admin";
     if (!isAdmin) return;
@@ -5247,6 +5452,7 @@
         });
       });
     } catch (e) {
+      if (isSilentAuthError(e)) return;
       tb.innerHTML = `<tr><td colspan="5" class="table-empty">Error al cargar usuarios.</td></tr>`;
       showAlert(`No se pudieron cargar usuarios: ${e.message}`, "err");
     }
@@ -5325,10 +5531,7 @@
     });
 
     $("btnLogout").addEventListener("click", () => {
-      setToken(null);
-      // setAuthUI(null);
-      showAlert("Sesión cerrada.", "info");
-      showLoginView();
+      logout();
     });
 
     async function doLogin() {
@@ -5353,12 +5556,15 @@
         });
 
         setToken(out.access_token);
+        state.auth.logoutInProgress = false;
+        state.auth.sessionExpiredNotified = false;
 
         const me = await api("/auth/me");
         setAuthUI(me);
 
         showAlert(`Bienvenido, ${me.username}.`, "ok");
         showAppView();
+        startAuthenticatedPollers();
 
         // Opcional: recargar data
         await loadReportes();
@@ -5369,6 +5575,7 @@
         await loadConsultaTablasDisponibles();
         await fetchUsuariosAdmin();
       } catch (err) {
+        if (isSilentAuthError(err)) return;
         $("loginError").style.display = "";
         $("loginError").innerText = err.message || "Error de autenticación";
         setToken(null);
