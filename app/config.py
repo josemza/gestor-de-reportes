@@ -11,6 +11,7 @@ load_dotenv(dotenv_path=ENV_PATH,override=True)
 
 class Settings(BaseModel):
     APP_NAME: str = Field(default="Reporteador GCI")
+    APP_VERSION: str = Field(default="dev")
     API_HOST: str = Field(default="0.0.0.0")
     API_PORT: int = Field(default=8037)
 
@@ -102,6 +103,14 @@ class Settings(BaseModel):
             raise ValueError(f"WORKER_TIMEZONE invalida: {tz!r}")
         return tz
 
+    @field_validator("APP_VERSION", mode="before")
+    @classmethod
+    def validate_app_version(cls, v: str) -> str:
+        version = str(v or "").strip()
+        if not version:
+            raise ValueError("APP_VERSION no puede estar vacio")
+        return version
+
     @model_validator(mode="after")
     def validate_lock_windows(self) -> "Settings":
         if self.WORKER_LOCK_STALE_SECONDS <= self.WORKER_LOCK_HEARTBEAT_SECONDS:
@@ -117,6 +126,7 @@ def _env(name: str, default: str | None = None) -> str | None:
 def get_settings() -> Settings:
     raw = {
         "APP_NAME": _env("APP_NAME", "Reporteador GCI"),
+        "APP_VERSION": _env("APP_VERSION", "dev"),
         "API_HOST": _env("API_HOST", "0.0.0.0"),
         "API_PORT": _env("API_PORT", "8037"),
         "WORKER_POLL_SECONDS": _env("WORKER_POLL_SECONDS", "3"),

@@ -4,10 +4,11 @@ import json
 from pathlib import Path
 import re
 from typing import Any
+from urllib.parse import quote
 
-from fastapi import FastAPI, Depends, HTTPException, Query, Request
+from fastapi import FastAPI, Depends, HTTPException, Query, Request, Response
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import HTMLResponse
 from sqlalchemy import select, delete, func, Table, MetaData, inspect, text
 from sqlalchemy.exc import NoSuchTableError
 from sqlalchemy.orm import Session
@@ -95,7 +96,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=settings.APP_NAME,
-    version="1.0.0",
+    version=settings.APP_VERSION,
     lifespan=lifespan,
 )
 
@@ -112,12 +113,37 @@ app.include_router(auth_router)
 
 # static + frontend
 BASE_DIR = Path(__file__).resolve().parent
+INDEX_TEMPLATE_PATH = BASE_DIR / "templates" / "index.html"
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
+
+NO_CACHE_HEADERS = {
+    "Cache-Control": "no-cache, no-store, must-revalidate",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+
+
+def _render_index_html(app_version: str) -> str:
+    html = INDEX_TEMPLATE_PATH.read_text(encoding="utf-8")
+    return (
+        html
+        .replace("__APP_VERSION_URL__", quote(app_version, safe=""))
+        .replace("__APP_VERSION_JSON__", json.dumps(app_version, ensure_ascii=False))
+    )
 
 
 @app.get("/", include_in_schema=False)
-def home():
-    return FileResponse(BASE_DIR / "templates" / "index.html")
+def home(_request: Request):
+    return HTMLResponse(
+        content=_render_index_html(settings.APP_VERSION),
+        headers=NO_CACHE_HEADERS,
+    )
+
+
+@app.get("/version", tags=["health"])
+def get_version(response: Response):
+    response.headers.update(NO_CACHE_HEADERS)
+    return {"version": settings.APP_VERSION}
 
 
 @app.get("/health", response_model=HealthOut, tags=["health"])

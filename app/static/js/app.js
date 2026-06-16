@@ -69,10 +69,20 @@
       step: "datos",
       selectedTabla: null,
     },
+    versionMonitor: {
+      localVersion: String(window.APP_VERSION || "dev"),
+      pollTimer: null,
+      updateDetected: false,
+      toastHandle: null,
+    },
   };
 
+  const APP_VERSION = String(window.APP_VERSION || "dev");
   const AUTH_STORAGE_KEY = "reporteador_token";
   const SIDEBAR_COLLAPSED_KEY = "reporteador_sidebar_collapsed";
+  const VERSION_ENDPOINT = "/version";
+  const VERSION_POLL_INTERVAL_MS = 60000;
+  const VERSION_UPDATE_TOAST_ID = "app-version-update";
 
   function getToken() {
     return localStorage.getItem(AUTH_STORAGE_KEY);
@@ -1089,9 +1099,20 @@
       });
     }
 
+    if (options.id) {
+      wrap.querySelectorAll(".app-toast").forEach((existingToast) => {
+        if (existingToast.dataset.toastId === String(options.id)) {
+          existingToast.remove();
+        }
+      });
+    }
+
     const toast = document.createElement("div");
     toast.className = `app-toast ${normalizedType}`;
     toast.setAttribute("role", normalizedType === "error" || normalizedType === "warning" ? "alert" : "status");
+    if (options.id) {
+      toast.dataset.toastId = String(options.id);
+    }
 
     const body = document.createElement("div");
     body.className = "app-toast__body";
@@ -1107,6 +1128,29 @@
     text.className = "app-toast__message";
     text.textContent = String(message);
     body.appendChild(text);
+
+    if (Array.isArray(options.actions) && options.actions.length) {
+      const actions = document.createElement("div");
+      actions.className = "app-toast__actions";
+
+      options.actions.forEach((action) => {
+        if (!action?.label) return;
+        const actionBtn = document.createElement("button");
+        actionBtn.type = "button";
+        actionBtn.className = `app-toast__action ${action.variant === "primary" ? "is-primary" : ""}`.trim();
+        actionBtn.textContent = String(action.label);
+        actionBtn.addEventListener("click", () => {
+          if (typeof action.onClick === "function") {
+            action.onClick(removeToast);
+          }
+        });
+        actions.appendChild(actionBtn);
+      });
+
+      if (actions.childElementCount > 0) {
+        body.appendChild(actions);
+      }
+    }
 
     const closeBtn = document.createElement("button");
     closeBtn.type = "button";
@@ -1143,6 +1187,87 @@
 
   window.showToast = showToast;
   window.showAlert = showAlert;
+
+  async function fetchRemoteAppVersion() {
+    const response = await fetch(`${state.apiBase}${VERSION_ENDPOINT}`, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+      },
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    const version = String(data?.version || "").trim();
+    return version || null;
+  }
+
+  function stopVersionPolling() {
+    if (state.versionMonitor.pollTimer) {
+      window.clearInterval(state.versionMonitor.pollTimer);
+      state.versionMonitor.pollTimer = null;
+    }
+  }
+
+  function showVersionUpdateToast(remoteVersion) {
+    if (state.versionMonitor.toastHandle) return;
+
+    state.versionMonitor.toastHandle = showToast(
+      "Hay una nueva versión disponible. Actualiza para cargar los últimos cambios.",
+      "warning",
+      {
+        id: VERSION_UPDATE_TOAST_ID,
+        title: "Nueva versión disponible",
+        duration: 0,
+        actions: [
+          {
+            label: "Actualizar",
+            variant: "primary",
+            onClick: () => {
+              window.location.reload();
+            },
+          },
+        ],
+      }
+    );
+
+    if (state.versionMonitor.toastHandle?.element && remoteVersion) {
+      state.versionMonitor.toastHandle.element.dataset.remoteVersion = remoteVersion;
+    }
+  }
+
+  async function checkForAppVersionUpdate() {
+    if (state.versionMonitor.updateDetected) return;
+
+    try {
+      const remoteVersion = await fetchRemoteAppVersion();
+      if (!remoteVersion || remoteVersion === state.versionMonitor.localVersion) {
+        return;
+      }
+
+      state.versionMonitor.updateDetected = true;
+      showVersionUpdateToast(remoteVersion);
+      stopVersionPolling();
+    } catch (_) {
+      // Silencioso: no afecta el uso normal de la app.
+    }
+  }
+
+  function startVersionPolling() {
+    stopVersionPolling();
+    state.versionMonitor.localVersion = APP_VERSION;
+    state.versionMonitor.updateDetected = false;
+    state.versionMonitor.toastHandle = null;
+
+    void checkForAppVersionUpdate();
+    state.versionMonitor.pollTimer = window.setInterval(() => {
+      void checkForAppVersionUpdate();
+    }, VERSION_POLL_INTERVAL_MS);
+  }
 
   async function api(path, opts = {}) {
     const token = getToken();
@@ -2632,6 +2757,7 @@
     setupAdminTablasConsulta();
     setupUsuarios();
     setupAuthUI();
+    startVersionPolling();
 
     await bootstrapAuth();
     await loadHealth();

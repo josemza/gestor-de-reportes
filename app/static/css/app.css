@@ -90,6 +90,42 @@ body {
   word-break: break-word;
 }
 
+.app-toast__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-top: 0.8rem;
+}
+
+.app-toast__action {
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #0f172a;
+  cursor: pointer;
+  border-radius: 999px;
+  padding: 0.45rem 0.8rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1;
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+
+.app-toast__action:hover {
+  background: #f8fafc;
+  border-color: #94a3b8;
+}
+
+.app-toast__action.is-primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #ffffff;
+}
+
+.app-toast__action.is-primary:hover {
+  background: var(--primary-dark);
+  border-color: var(--primary-dark);
+}
+
 .app-toast__close {
   border: none;
   background: transparent;
