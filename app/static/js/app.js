@@ -5,9 +5,13 @@
     adminReportes: [],
     adminReportesAll: [],
     adminUsuarios: [],
+    adminRoles: [],
     adminEquipos: [],
     adminUsuarioEquipoIds: [],
     adminUsuarioEquiposModal: {
+      selectedUser: null,
+    },
+    adminUsuarioRoleModal: {
       selectedUser: null,
     },
     adminReporteEquipoIds: [],
@@ -218,6 +222,7 @@
     state.adminReportes = [];
     state.adminReportesAll = [];
     state.adminUsuarios = [];
+    state.adminRoles = [];
     state.adminEquipos = [];
     state.adminUsuarioEquipoIds = [];
     state.adminReporteEquipoIds = [];
@@ -258,6 +263,7 @@
     closeAdminReporteModal();
     closeAdminEquipoModal();
     closeAdminUsuarioEquiposModal();
+    closeAdminUsuarioRoleModal();
     closeAdminTablaConsultaModal();
     closeConsultaResultadosModal();
     renderNuevaSolicitudInputs();
@@ -344,6 +350,11 @@
     if (modal) modal.style.display = "";
   }
 
+  function openAdminUsuarioRoleModal() {
+    const modal = $("adminUsuarioRoleModal");
+    if (modal) modal.style.display = "";
+  }
+
   function closeAdminReporteModal() {
     const modal = $("adminReporteModal");
     if (modal) modal.style.display = "none";
@@ -372,6 +383,20 @@
     state.adminUsuarioEquiposModal.selectedUser = null;
     state.adminUsuarioEquipoIds = [];
     if ($("admUsuarioEquiposFiltro")) $("admUsuarioEquiposFiltro").value = "";
+  }
+
+  function closeAdminUsuarioRoleModal() {
+    const modal = $("adminUsuarioRoleModal");
+    if (modal) modal.style.display = "none";
+    state.adminUsuarioRoleModal.selectedUser = null;
+    if ($("admEditarRolNuevo")) $("admEditarRolNuevo").value = "";
+    if ($("admUsuarioRoleIdentity")) $("admUsuarioRoleIdentity").textContent = "Usuario";
+    if ($("admUsuarioRoleUsername")) $("admUsuarioRoleUsername").textContent = "-";
+    if ($("admUsuarioRoleCurrent")) $("admUsuarioRoleCurrent").textContent = "-";
+    if ($("admUsuarioRoleContextText")) {
+      $("admUsuarioRoleContextText").textContent = "Selecciona el rol permitido para este usuario.";
+    }
+    if ($("admUsuarioRoleWarning")) $("admUsuarioRoleWarning").hidden = true;
   }
 
   function resetAdminReporteModalForCreate() {
@@ -1198,6 +1223,12 @@
     .replaceAll("'", "&#039;");
 
   const isAdminUser = () => state.me?.roles?.includes("ADMIN") || state.me?.username === "admin";
+  const normalizeRoleName = (role) => (role || "").toString().trim().toUpperCase();
+
+  function getUserRoleSummary(user) {
+    const roles = Array.isArray(user?.roles) ? user.roles.map(normalizeRoleName).filter(Boolean) : [];
+    return roles.join(", ");
+  }
 
   function normalizeJsonExampleText(txt) {
     const raw = (txt || "").trim();
@@ -2925,6 +2956,7 @@
         closeAdminReporteModal();
         closeAdminEquipoModal();
         closeAdminUsuarioEquiposModal();
+        closeAdminUsuarioRoleModal();
         closeAdminTablaConsultaModal();
         closeConsultaResultadosModal();
       }
@@ -2982,6 +3014,7 @@
       await loadAdminEquiposData();
       await loadAdminTablasConsulta();
       await loadConsultaTablasDisponibles();
+      await fetchAdminRoles();
       await fetchUsuariosAdmin();
     } catch (e) {
       if (isSilentAuthError(e)) return;
@@ -3856,6 +3889,42 @@
     }
   }
 
+  function setRoleSelectOptions(selectId, roleNames, placeholder, preferredValue = "") {
+    const sel = $(selectId);
+    if (!sel) return;
+
+    const normalizedRoles = Array.from(new Set((roleNames || []).map(normalizeRoleName).filter(Boolean)));
+    const previousValue = normalizeRoleName(preferredValue || sel.value);
+
+    if (!normalizedRoles.length) {
+      sel.innerHTML = `<option value="">${placeholder}</option>`;
+      return;
+    }
+
+    sel.innerHTML =
+      `<option value="">${placeholder}</option>` +
+      normalizedRoles.map((roleName) => `<option value="${esc(roleName)}">${esc(roleName)}</option>`).join("");
+
+    if (previousValue && normalizedRoles.includes(previousValue)) {
+      sel.value = previousValue;
+      return;
+    }
+
+    if (selectId === "nuevoRol" && normalizedRoles.includes("USER")) {
+      sel.value = "USER";
+    }
+  }
+
+  async function fetchAdminRoles() {
+    if (!isAuthenticated() || !isAdminUser()) return [];
+
+    const roles = await api("/admin/roles");
+    state.adminRoles = Array.from(new Set((roles || []).map(normalizeRoleName).filter(Boolean)));
+    setRoleSelectOptions("nuevoRol", state.adminRoles, state.adminRoles.length ? "Seleccione rol" : "No hay roles", $("nuevoRol")?.value || "USER");
+    setRoleSelectOptions("admEditarRolNuevo", state.adminRoles, state.adminRoles.length ? "Seleccione rol" : "No hay roles", $("admEditarRolNuevo")?.value || "");
+    return state.adminRoles;
+  }
+
   function fillUsuarioEquiposSelect() {
     const rows = state.adminUsuarios || [];
     setSelectOptions("admUsuarioEquipo", rows, rows.length ? "Seleccione usuario" : "No hay usuarios", (u) => esc(u.username));
@@ -4003,6 +4072,127 @@
       if (btn) {
         btn.disabled = false;
         btn.textContent = btn.dataset.prevText || "Guardar equipos";
+      }
+    }
+  }
+
+  function getAdminUsuarioRoleSelectedUser() {
+    return state.adminUsuarioRoleModal.selectedUser || null;
+  }
+
+  function renderAdminUsuarioRoleWarning() {
+    const banner = $("admUsuarioRoleWarning");
+    const text = $("admUsuarioRoleWarningText");
+    if (!banner || !text) return;
+
+    const user = getAdminUsuarioRoleSelectedUser();
+    const nextRole = normalizeRoleName($("admEditarRolNuevo")?.value);
+    const isSelf = Number(user?.id) === Number(state.me?.id);
+
+    if (isSelf && nextRole && nextRole !== "ADMIN") {
+      text.textContent = "No puedes quitarte a ti mismo el rol de administrador desde esta pantalla.";
+      banner.hidden = false;
+      return;
+    }
+
+    banner.hidden = true;
+  }
+
+  function setAdminUsuarioRoleSelectedUser(user) {
+    state.adminUsuarioRoleModal.selectedUser = user || null;
+    const currentUser = getAdminUsuarioRoleSelectedUser();
+    const roleSummary = getUserRoleSummary(currentUser) || "Sin rol";
+    const currentRole = normalizeRoleName(currentUser?.roles?.[0]);
+
+    if ($("admUsuarioRoleIdentity")) {
+      $("admUsuarioRoleIdentity").textContent = currentUser?.username || "Usuario";
+    }
+    if ($("admUsuarioRoleUsername")) {
+      $("admUsuarioRoleUsername").textContent = currentUser?.username || "-";
+    }
+    if ($("admUsuarioRoleCurrent")) {
+      $("admUsuarioRoleCurrent").textContent = roleSummary;
+    }
+    if ($("admUsuarioRoleContextText")) {
+      $("admUsuarioRoleContextText").textContent = currentUser?.roles?.length > 1
+        ? "Guardar reemplazará los roles actuales por un único rol."
+        : "Selecciona el rol permitido para este usuario.";
+    }
+
+    setRoleSelectOptions(
+      "admEditarRolNuevo",
+      state.adminRoles,
+      state.adminRoles.length ? "Seleccione rol" : "No hay roles",
+      currentRole,
+    );
+    renderAdminUsuarioRoleWarning();
+  }
+
+  async function openUsuarioRoleModalForUser(user) {
+    if (!user?.id) {
+      showAlert("No se encontró el usuario seleccionado.", "err");
+      return;
+    }
+
+    try {
+      if (!state.adminRoles.length) {
+        await fetchAdminRoles();
+      }
+      setAdminUsuarioRoleSelectedUser(user);
+      openAdminUsuarioRoleModal();
+    } catch (e) {
+      closeAdminUsuarioRoleModal();
+      showAlert(`No se pudieron cargar roles disponibles: ${e.message}`, "err");
+    }
+  }
+
+  async function updateUserRoleById(userId, rol) {
+    return api(`/admin/usuarios/${encodeURIComponent(userId)}/rol`, {
+      method: "PATCH",
+      body: JSON.stringify({ rol }),
+    });
+  }
+
+  async function saveUsuarioRoleAdmin() {
+    const btn = $("btnGuardarUsuarioRole");
+    const user = getAdminUsuarioRoleSelectedUser();
+    const newRole = normalizeRoleName($("admEditarRolNuevo")?.value);
+
+    if (!user?.id) {
+      showAlert("No se encontró el usuario seleccionado.", "err");
+      return;
+    }
+    if (!newRole) {
+      showAlert("Selecciona un rol válido.", "err");
+      return;
+    }
+    if (Number(user.id) === Number(state.me?.id) && newRole !== "ADMIN") {
+      renderAdminUsuarioRoleWarning();
+      showAlert("No puedes quitarte a ti mismo el rol de administrador desde esta pantalla.", "err");
+      return;
+    }
+
+    try {
+      if (btn) {
+        btn.disabled = true;
+        btn.dataset.prevText = btn.textContent || "";
+        btn.textContent = "Guardando...";
+      }
+
+      const out = await updateUserRoleById(user.id, newRole);
+      closeAdminUsuarioRoleModal();
+      await Promise.all([
+        fetchAdminRoles(),
+        fetchUsuariosAdmin(),
+        loadAdminEquiposData(),
+      ]);
+      showAlert(`Rol actualizado para ${user.username}: ${(out.roles || []).join(", ") || newRole}.`, "ok");
+    } catch (e) {
+      showAlert(`No se pudo actualizar el rol de ${user.username}: ${e.message}`, "err");
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = btn.dataset.prevText || "Guardar";
       }
     }
   }
@@ -5426,15 +5616,28 @@
           <td>${esc((u.roles || []).join(", "))}</td>
           <td>${u.activo === 1 ? '<span class="status-pill status-OK">ACTIVO</span>' : '<span class="status-pill status-CANCELADO">INACTIVO</span>'}</td>
           <td>
-            <button class="btn btn--ghost btn--sm btn-user-equipos" data-user-id="${esc(u.id)}">
-              Equipos
-            </button>
-            <button class="btn btn--ghost btn--sm btn-reset-password" data-user-id="${esc(u.id)}" data-username="${esc(u.username)}">
-              Restaurar contraseña
-            </button>
+            <div class="inline-controls inline-controls--wrap">
+              <button class="btn btn--ghost btn--sm btn-edit-user-role" data-user-id="${esc(u.id)}">
+                Editar rol
+              </button>
+              <button class="btn btn--ghost btn--sm btn-user-equipos" data-user-id="${esc(u.id)}">
+                Equipos
+              </button>
+              <button class="btn btn--ghost btn--sm btn-reset-password" data-user-id="${esc(u.id)}" data-username="${esc(u.username)}">
+                Restaurar contraseña
+              </button>
+            </div>
           </td>
         </tr>
       `).join("");
+
+      document.querySelectorAll(".btn-edit-user-role").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const userId = Number(btn.dataset.userId || 0);
+          const user = (state.adminUsuarios || []).find((row) => Number(row.id) === userId) || null;
+          await openUsuarioRoleModalForUser(user);
+        });
+      });
 
       document.querySelectorAll(".btn-user-equipos").forEach((btn) => {
         btn.addEventListener("click", async () => {
@@ -5489,7 +5692,7 @@
 
   async function crearUsuarioAdmin() {
     const username = $("nuevoUsername")?.value?.trim();
-    const rol = $("nuevoRol")?.value || "USER";
+    const rol = normalizeRoleName($("nuevoRol")?.value) || normalizeRoleName(state.adminRoles[0]) || "USER";
 
     if (!username) {
       showAlert("Ingresa el nombre de usuario.", "err");
@@ -5522,6 +5725,11 @@
     $("btnCancelarUsuarioEquipos")?.addEventListener("click", closeAdminUsuarioEquiposModal);
     $("btnGuardarUsuarioEquipos")?.addEventListener("click", saveUsuarioEquiposAdmin);
     $("admUsuarioEquiposFiltro")?.addEventListener("input", renderUsuarioEquiposChecks);
+    $("btnCloseAdmUsuarioRoleModal")?.addEventListener("click", closeAdminUsuarioRoleModal);
+    $("btnCloseAdmUsuarioRoleModalBg")?.addEventListener("click", closeAdminUsuarioRoleModal);
+    $("btnCancelarUsuarioRole")?.addEventListener("click", closeAdminUsuarioRoleModal);
+    $("btnGuardarUsuarioRole")?.addEventListener("click", saveUsuarioRoleAdmin);
+    $("admEditarRolNuevo")?.addEventListener("change", renderAdminUsuarioRoleWarning);
   }
 
   function setupAuthUI() {
@@ -5573,6 +5781,7 @@
         await loadAdminEquiposData();
         await loadAdminTablasConsulta();
         await loadConsultaTablasDisponibles();
+        await fetchAdminRoles();
         await fetchUsuariosAdmin();
       } catch (err) {
         if (isSilentAuthError(err)) return;

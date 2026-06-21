@@ -64,7 +64,7 @@ from .schemas_admin import (
     TablaConsultaAdminPageOut,
     TablaConsultaAdminUpdate,
 )
-from .schemas_auth import UserCreateIn, UserCreateOut, UserOut, UserPasswordResetOut
+from .schemas_auth import UserCreateIn, UserCreateOut, UserOut, UserPasswordResetOut, UserRoleUpdateIn
 from .init_db import init_db
 from .models import (
     InputCarpetaPermitida,
@@ -627,18 +627,41 @@ def _validate_legacy_ruta_input(
 
 
 def _serialize_user_out(db: Session, user: Usuario) -> UserOut:
-    role_rows = db.execute(
-        select(Rol.nombre)
-        .join(UsuarioRol, UsuarioRol.rol_id == Rol.id)
-        .where(UsuarioRol.usuario_id == user.id)
-    ).all()
-    roles = [r[0] for r in role_rows]
+    roles = _get_user_role_names(db, user.id)
     return UserOut(
         id=user.id,
         username=user.username,
         activo=user.activo,
         roles=roles,
     )
+
+
+def _get_user_role_names(db: Session, user_id: int) -> list[str]:
+    role_rows = db.execute(
+        select(Rol.nombre)
+        .join(UsuarioRol, UsuarioRol.rol_id == Rol.id)
+        .where(UsuarioRol.usuario_id == user_id)
+        .order_by(Rol.nombre.asc())
+    ).all()
+    return [r[0] for r in role_rows]
+
+
+def _list_role_names(db: Session) -> list[str]:
+    return db.execute(
+        select(Rol.nombre).order_by(Rol.nombre.asc())
+    ).scalars().all()
+
+
+def _count_active_admin_users(db: Session) -> int:
+    return db.execute(
+        select(func.count(func.distinct(Usuario.id)))
+        .join(UsuarioRol, UsuarioRol.usuario_id == Usuario.id)
+        .join(Rol, Rol.id == UsuarioRol.rol_id)
+        .where(
+            Usuario.activo == 1,
+            Rol.nombre == "ADMIN",
+        )
+    ).scalar_one()
 
 
 def _get_equipo_or_404(db: Session, equipo_id: int) -> Equipo:
@@ -1532,6 +1555,14 @@ def list_usuarios(
     return [_serialize_user_out(db, user) for user in users]
 
 
+@app.get("/admin/roles", response_model=list[str], tags=["admin"])
+def list_roles_admin(
+    db: Session = Depends(get_db),
+    _user=Depends(require_admin_rutas),
+):
+    return _list_role_names(db)
+
+
 @app.post("/admin/usuarios", response_model=UserCreateOut, tags=["admin"])
 def create_usuario(
     payload: UserCreateIn,
@@ -1582,6 +1613,56 @@ def create_usuario(
         roles=sorted(found_role_names),
         password_temporal=password_temporal,
     )
+
+
+@app.patch("/admin/usuarios/{usuario_id}/rol", response_model=UserOut, tags=["admin"])
+def update_usuario_role(
+    usuario_id: int,
+    payload: UserRoleUpdateIn,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_admin_rutas),
+):
+    user = db.get(Usuario, usuario_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no existe")
+
+    requested_role = payload.rol.strip().upper()
+    if not requested_role:
+        raise HTTPException(status_code=400, detail="Rol inválido")
+
+    role = db.execute(
+        select(Rol).where(Rol.nombre == requested_role)
+    ).scalar_one_or_none()
+    if not role:
+        raise HTTPException(status_code=400, detail=f"Rol inválido: {requested_role}")
+
+    current_roles = _get_user_role_names(db, user.id)
+    if current_user["id"] == user.id and requested_role != "ADMIN":
+        raise HTTPException(
+            status_code=400,
+            detail="No puedes quitarte a ti mismo el rol de administrador desde esta pantalla",
+        )
+
+    if (
+        user.activo == 1
+        and "ADMIN" in current_roles
+        and requested_role != "ADMIN"
+        and _count_active_admin_users(db) <= 1
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Debe existir al menos un usuario admin activo en el sistema",
+        )
+
+    if len(current_roles) == 1 and current_roles[0] == requested_role:
+        return _serialize_user_out(db, user)
+
+    db.execute(delete(UsuarioRol).where(UsuarioRol.usuario_id == user.id))
+    db.flush()
+    db.add(UsuarioRol(usuario_id=user.id, rol_id=role.id))
+    db.commit()
+    db.refresh(user)
+    return _serialize_user_out(db, user)
 
 
 @app.post("/admin/usuarios/{usuario_id}/reset-password", response_model=UserPasswordResetOut, tags=["admin"])

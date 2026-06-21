@@ -23,6 +23,9 @@ class UserCreateIn(BaseModel):
     roles: list[str] = Field(default_factory=lambda: ["USER"])
     activo: int = Field(default=1)
 
+class UserRoleUpdateIn(BaseModel):
+    rol: str = Field(min_length=1, max_length=80)
+
 class UserOut(BaseModel):
     id: int
     username: str

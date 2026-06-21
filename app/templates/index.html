@@ -568,6 +568,62 @@
     </div>
   </div>
 
+  <div id="adminUsuarioRoleModal" class="modal" style="display:none;">
+    <div class="modal__backdrop" id="btnCloseAdmUsuarioRoleModalBg"></div>
+    <div class="modal__panel modal-compact admin-compact">
+      <div class="card card--compact card-compact section-compact">
+        <div class="card__header card__header--between">
+          <div>
+            <h3>Editar rol de usuario</h3>
+            <p id="admUsuarioRoleContextText" class="muted">Selecciona el rol permitido para este usuario.</p>
+          </div>
+          <div class="inline-controls">
+            <span id="admUsuarioRoleIdentity" class="badge badge--neutral">Usuario</span>
+            <button type="button" id="btnCloseAdmUsuarioRoleModal" class="btn btn--ghost btn--sm">Cerrar</button>
+          </div>
+        </div>
+
+        <div class="form-grid form-compact">
+          <section class="form-section field--full">
+            <div class="form-layout-grid">
+              <div class="field field--span-6">
+                <label>Usuario</label>
+                <div id="admUsuarioRoleUsername" class="badge badge--neutral">-</div>
+              </div>
+              <div class="field field--span-6">
+                <label>Rol actual</label>
+                <div id="admUsuarioRoleCurrent" class="badge badge--neutral">-</div>
+              </div>
+            </div>
+          </section>
+
+          <section class="form-section field--full">
+            <div id="admUsuarioRoleWarning" class="access-context-banner" hidden>
+              <span class="access-context-banner__label">Protección</span>
+              <strong id="admUsuarioRoleWarningText">No puedes quitarte a ti mismo el rol de administrador desde esta pantalla.</strong>
+            </div>
+          </section>
+
+          <section class="form-section field--full">
+            <div class="field">
+              <label for="admEditarRolNuevo">Nuevo rol</label>
+              <select id="admEditarRolNuevo">
+                <option value="">Seleccione rol</option>
+                <option value="USER">USER</option>
+                <option value="ADMIN">ADMIN</option>
+              </select>
+            </div>
+          </section>
+
+          <div class="field field--full configurator-actions">
+            <button type="button" id="btnCancelarUsuarioRole" class="btn btn--ghost btn--inline">Cancelar</button>
+            <button type="button" id="btnGuardarUsuarioRole" class="btn btn--primary btn--inline">Guardar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="adminReporteModal" class="modal" style="display:none;">
     <div class="modal__backdrop" id="btnCloseAdmRepModalBg"></div>
     <div class="modal__panel modal__panel--configurator modal-compact admin-compact">
