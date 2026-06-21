@@ -31,6 +31,10 @@
     apiBase: window.location.origin,
     selectedRequestId: null,
     lastParametrosEjemploAplicado: "",
+    reporteCombobox: {
+      isOpen: false,
+      highlightedIndex: -1,
+    },
     auth: {
       token: null,
       user: null,
@@ -241,6 +245,7 @@
       $("reporte").innerHTML = `<option value="">Inicia sesión para ver reportes</option>`;
       $("reporte").value = "";
     }
+    syncReporteComboboxFromSelect();
     if ($("tbodyMis")) {
       $("tbodyMis").innerHTML = `<tr><td colspan="8" class="table-empty">Inicia sesión para consultar solicitudes.</td></tr>`;
     }
@@ -328,11 +333,14 @@
   function openNuevaModal() {
     const modal = $("nuevaSolicitudModal");
     if (modal) modal.style.display = "";
+    syncReporteComboboxFromSelect();
+    $("reporteComboboxTrigger")?.focus();
   }
 
   function closeNuevaModal() {
     const modal = $("nuevaSolicitudModal");
     if (modal) modal.style.display = "none";
+    closeReporteCombobox();
   }
 
   function openAdminReporteModal() {
@@ -1222,6 +1230,13 @@
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
 
+  const normalizeSearchText = (value) => (value ?? "")
+    .toString()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+
   const isAdminUser = () => state.me?.roles?.includes("ADMIN") || state.me?.username === "admin";
   const normalizeRoleName = (role) => (role || "").toString().trim().toUpperCase();
 
@@ -1553,20 +1568,309 @@
   }
 
   // ---------- Reportes ----------
+  function getReporteComboboxSelectedText() {
+    const select = $("reporte");
+    const selectedValue = (select?.value || "").trim();
+    if (selectedValue) {
+      const reporte = getReporteByCodigo(selectedValue);
+      if (reporte) {
+        return `${reporte.codigo} · ${reporte.nombre || "Sin nombre"}`;
+      }
+
+      const selectedOption = Array.from(select?.options || []).find((option) => option.value === selectedValue);
+      if (selectedOption) {
+        return (selectedOption.textContent || "").replace(" — ", " · ");
+      }
+    }
+
+    return (select?.options?.[0]?.textContent || "Seleccione un reporte").trim();
+  }
+
+  function getReporteComboboxEntries() {
+    return (state.reportes || []).map((reporte) => ({
+      codigo: reporte.codigo || "",
+      nombre: reporte.nombre || "",
+      descripcion: reporte.descripcion || "",
+      searchText: normalizeSearchText(`${reporte.codigo || ""} ${reporte.nombre || ""} ${reporte.descripcion || ""}`),
+    }));
+  }
+
+  function syncReporteComboboxFromSelect() {
+    const wrapper = $("reporteCombobox");
+    const trigger = $("reporteComboboxTrigger");
+    const valueEl = $("reporteComboboxValue");
+    const select = $("reporte");
+    if (!wrapper || !trigger || !valueEl || !select) return;
+
+    const hasSelectableReports = Array.from(select.options || []).some((option) => (option.value || "").trim());
+    const selectedValue = (select.value || "").trim();
+    const selectedText = getReporteComboboxSelectedText();
+
+    trigger.disabled = !hasSelectableReports;
+    trigger.setAttribute("aria-expanded", state.reporteCombobox.isOpen ? "true" : "false");
+    valueEl.textContent = selectedText;
+    valueEl.classList.toggle("is-placeholder", !selectedValue);
+    valueEl.title = selectedText;
+
+    if (!hasSelectableReports) {
+      closeReporteCombobox();
+    }
+
+    renderReporteComboboxOptions();
+  }
+
+  function ensureReporteComboboxHighlightVisible() {
+    const list = $("reporteComboboxList");
+    const active = list?.querySelector(".searchable-select__option.is-active");
+    active?.scrollIntoView({ block: "nearest" });
+  }
+
+  function renderReporteComboboxOptions() {
+    const search = $("reporteComboboxSearch");
+    const list = $("reporteComboboxList");
+    const select = $("reporte");
+    if (!search || !list || !select) return;
+
+    const query = normalizeSearchText(search.value || "");
+    const entries = getReporteComboboxEntries();
+    const filtered = !query
+      ? entries
+      : entries.filter((entry) => entry.searchText.includes(query));
+
+    if (!entries.length) {
+      list.innerHTML = `<div class="searchable-select__empty">${esc((select.options?.[0]?.textContent || "No hay reportes disponibles").trim())}</div>`;
+      state.reporteCombobox.highlightedIndex = -1;
+      search.removeAttribute("aria-activedescendant");
+      return;
+    }
+
+    if (!filtered.length) {
+      list.innerHTML = `<div class="searchable-select__empty">No se encontraron reportes.</div>`;
+      state.reporteCombobox.highlightedIndex = -1;
+      search.removeAttribute("aria-activedescendant");
+      return;
+    }
+
+    const selectedValue = (select.value || "").trim();
+    const selectedIndex = filtered.findIndex((entry) => entry.codigo === selectedValue);
+    let highlightedIndex = state.reporteCombobox.highlightedIndex;
+
+    if (highlightedIndex < 0 || highlightedIndex >= filtered.length) {
+      highlightedIndex = selectedIndex >= 0 ? selectedIndex : 0;
+    }
+    state.reporteCombobox.highlightedIndex = highlightedIndex;
+
+    list.innerHTML = filtered.map((entry, index) => {
+      const isSelected = entry.codigo === selectedValue;
+      const isActive = index === highlightedIndex;
+      const descriptionHtml = entry.descripcion
+        ? `<span class="searchable-select__option-description">${esc(entry.descripcion)}</span>`
+        : "";
+      return `
+        <button
+          type="button"
+          id="reporteComboboxOption_${index}"
+          class="searchable-select__option${isActive ? " is-active" : ""}${isSelected ? " is-selected" : ""}"
+          role="option"
+          aria-selected="${isSelected ? "true" : "false"}"
+          data-index="${index}"
+          data-value="${esc(entry.codigo)}"
+        >
+          <span class="searchable-select__option-code">${esc(entry.codigo)}</span>
+          <span class="searchable-select__option-name">${esc(entry.nombre || "Sin nombre descriptivo")}</span>
+          ${descriptionHtml}
+        </button>
+      `;
+    }).join("");
+
+    const activeId = `reporteComboboxOption_${highlightedIndex}`;
+    search.setAttribute("aria-activedescendant", activeId);
+
+    list.querySelectorAll(".searchable-select__option").forEach((option) => {
+      option.addEventListener("click", () => {
+        selectReporteFromCombobox(option.dataset.value || "");
+      });
+    });
+
+    if (state.reporteCombobox.isOpen) {
+      ensureReporteComboboxHighlightVisible();
+    }
+  }
+
+  function openReporteCombobox() {
+    const wrapper = $("reporteCombobox");
+    const trigger = $("reporteComboboxTrigger");
+    const dropdown = $("reporteComboboxDropdown");
+    const search = $("reporteComboboxSearch");
+    if (!wrapper || !trigger || !dropdown || !search || trigger.disabled) return;
+
+    state.reporteCombobox.isOpen = true;
+    state.reporteCombobox.highlightedIndex = -1;
+    wrapper.classList.add("is-open");
+    trigger.setAttribute("aria-expanded", "true");
+    dropdown.hidden = false;
+    search.value = "";
+    renderReporteComboboxOptions();
+    search.focus();
+  }
+
+  function closeReporteCombobox(options = {}) {
+    const { restoreFocus = false } = options;
+    const wrapper = $("reporteCombobox");
+    const trigger = $("reporteComboboxTrigger");
+    const dropdown = $("reporteComboboxDropdown");
+    const search = $("reporteComboboxSearch");
+    if (!wrapper || !trigger || !dropdown || !search) return;
+
+    state.reporteCombobox.isOpen = false;
+    state.reporteCombobox.highlightedIndex = -1;
+    wrapper.classList.remove("is-open");
+    trigger.setAttribute("aria-expanded", "false");
+    dropdown.hidden = true;
+    search.value = "";
+    search.removeAttribute("aria-activedescendant");
+
+    if (restoreFocus) {
+      trigger.focus();
+    }
+  }
+
+  function moveReporteComboboxHighlight(step) {
+    const entries = getReporteComboboxEntries();
+    if (!entries.length) return;
+
+    const list = $("reporteComboboxList");
+    const options = Array.from(list?.querySelectorAll(".searchable-select__option") || []);
+    if (!options.length) return;
+
+    const current = state.reporteCombobox.highlightedIndex;
+    const next = current < 0
+      ? 0
+      : Math.max(0, Math.min(options.length - 1, current + step));
+
+    if (next === current) return;
+    state.reporteCombobox.highlightedIndex = next;
+    renderReporteComboboxOptions();
+  }
+
+  function selectReporteFromCombobox(codigo) {
+    const select = $("reporte");
+    if (!select) return;
+
+    const nextValue = (codigo || "").trim();
+    if (!nextValue) return;
+
+    const valueChanged = select.value !== nextValue;
+    select.value = nextValue;
+    syncReporteComboboxFromSelect();
+    closeReporteCombobox({ restoreFocus: true });
+
+    if (valueChanged) {
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  }
+
+  function setupReporteCombobox() {
+    const wrapper = $("reporteCombobox");
+    const trigger = $("reporteComboboxTrigger");
+    const dropdown = $("reporteComboboxDropdown");
+    const search = $("reporteComboboxSearch");
+    const select = $("reporte");
+    if (!wrapper || !trigger || !dropdown || !search || !select) return;
+
+    trigger.addEventListener("click", () => {
+      if (state.reporteCombobox.isOpen) {
+        closeReporteCombobox();
+        return;
+      }
+      openReporteCombobox();
+    });
+
+    trigger.addEventListener("keydown", (ev) => {
+      if (ev.key === "ArrowDown" || ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        openReporteCombobox();
+        return;
+      }
+
+      if (ev.key === "Escape" && state.reporteCombobox.isOpen) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        closeReporteCombobox();
+      }
+    });
+
+    search.addEventListener("input", () => {
+      state.reporteCombobox.highlightedIndex = -1;
+      renderReporteComboboxOptions();
+    });
+
+    search.addEventListener("keydown", (ev) => {
+      if (ev.key === "ArrowDown") {
+        ev.preventDefault();
+        moveReporteComboboxHighlight(1);
+        return;
+      }
+
+      if (ev.key === "ArrowUp") {
+        ev.preventDefault();
+        moveReporteComboboxHighlight(-1);
+        return;
+      }
+
+      if (ev.key === "Enter") {
+        const activeOption = dropdown.querySelector(".searchable-select__option.is-active");
+        if (!activeOption) return;
+        ev.preventDefault();
+        selectReporteFromCombobox(activeOption.dataset.value || "");
+        return;
+      }
+
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        ev.stopPropagation();
+        closeReporteCombobox({ restoreFocus: true });
+      }
+    });
+
+    select.addEventListener("change", () => {
+      syncReporteComboboxFromSelect();
+    });
+
+    document.addEventListener("mousedown", (ev) => {
+      if (!state.reporteCombobox.isOpen) return;
+      if (wrapper.contains(ev.target)) return;
+      closeReporteCombobox();
+    });
+
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Escape" || !state.reporteCombobox.isOpen) return;
+      if (wrapper.contains(ev.target)) return;
+      ev.stopPropagation();
+      closeReporteCombobox();
+    }, true);
+
+    syncReporteComboboxFromSelect();
+  }
+
   async function loadReportes() {
     const sel = $("reporte");
     if (!sel) return;
+    const selectedBeforeReload = (sel.value || "").trim();
     if (!isAuthenticated()) {
       sel.innerHTML = `<option value="">Inicia sesion para ver reportes</option>`;
+      syncReporteComboboxFromSelect();
       return;
     }
 
     sel.innerHTML = `<option value="">Cargando...</option>`;
+    syncReporteComboboxFromSelect();
     try {
       const rows = await api("/reportes");
       state.reportes = rows || [];
       if (!rows.length) {
         sel.innerHTML = `<option value="">No hay reportes activos</option>`;
+        syncReporteComboboxFromSelect();
         resetNuevaSolicitudInputsState();
         renderNuevaSolicitudInputs();
         updateHintRutaInput();
@@ -1575,7 +1879,11 @@
 
       sel.innerHTML = `<option value="">Seleccione un reporte</option>` +
         rows.map(r => `<option value="${esc(r.codigo)}">${esc(r.codigo)} — ${esc(r.nombre)}</option>`).join("");
+      if (selectedBeforeReload && rows.some((row) => row.codigo === selectedBeforeReload)) {
+        sel.value = selectedBeforeReload;
+      }
 
+      syncReporteComboboxFromSelect();
       updateHintRutaInput();
       renderNuevaSolicitudInputs();
 
@@ -1584,6 +1892,7 @@
     } catch (e) {
       if (isSilentAuthError(e)) return;
       sel.innerHTML = `<option value="">Error al cargar reportes</option>`;
+      syncReporteComboboxFromSelect();
       resetNuevaSolicitudInputsState();
       renderNuevaSolicitudInputs();
       showAlert(`No se pudieron cargar reportes: ${e.message}`, "err");
@@ -2234,6 +2543,7 @@
 
   // ---------- Nueva solicitud ----------
   function setupNuevaSolicitud() {
+    setupReporteCombobox();
     $("reporte").addEventListener("change", async () => {
       updateParametrosEjemplo(getReporteByCodigo(($("reporte").value || "").trim()));
       await loadInputsForSelectedReporte();
@@ -2373,6 +2683,8 @@
     if (!preserveResult) {
       $("resultNueva").innerHTML = `<div class="result-empty">Formulario limpiado.</div>`;
     }
+    syncReporteComboboxFromSelect();
+    closeReporteCombobox();
     renderNuevaSolicitudInputs();
     updateHintRutaInput();
   }

@@ -4,8 +4,8 @@ import path from "node:path";
 
 const OUTPUT_DIR = path.join("test-results", "visual-multi-input");
 const BASE_URL = process.env.E2E_BASE_URL || "http://127.0.0.1:8037";
-const E2E_USER = process.env.E2E_USER || "";
-const E2E_PASSWORD = process.env.E2E_PASSWORD || "";
+const E2E_USER = process.env.E2E_USER || "admin";
+const E2E_PASSWORD = process.env.E2E_PASSWORD || "Admin123!";
 
 async function ensureOutputDir() {
   await fs.mkdir(OUTPUT_DIR, { recursive: true });
@@ -32,6 +32,21 @@ async function selectFirstNonEmptyOption(locator: Locator) {
 
   await locator.selectOption(optionValues[0]);
   return true;
+}
+
+async function selectReporteBySearch(page: Page, query: string, expectedCode: string) {
+  await page.locator("#reporteComboboxTrigger").click();
+  await expect(page.locator("#reporteComboboxDropdown")).toBeVisible();
+  await expect(page.locator("#reporteComboboxList")).toContainText(expectedCode);
+
+  const search = page.locator("#reporteComboboxSearch");
+  await search.fill(query);
+
+  const option = page.locator("#reporteComboboxList .searchable-select__option").filter({ hasText: expectedCode }).first();
+  await expect(option).toBeVisible();
+  await option.click();
+
+  await expect(page.locator("#reporteComboboxValue")).toContainText(expectedCode);
 }
 
 async function collectCriticalIssues(page: Page) {
@@ -145,8 +160,7 @@ test.describe("QA visual multiple inputs", () => {
     await expect(page.getByRole("heading", { name: "Nueva solicitud" })).toBeVisible();
     await saveEvidence(page, "11-nueva-solicitud-inicial.png");
 
-    const reporteSelect = page.locator("#reporte");
-    await reporteSelect.selectOption("RPT_EMAIL_CLI_ASEG_AG");
+    await selectReporteBySearch(page, "RPT_EMAIL", "RPT_EMAIL_CLI_ASEG_AG");
     await expect(page.locator("#nuevaSolicitudModeBadge")).toContainText(/legacy/i);
     await expect(page.locator("#ruta_input_select")).toBeEnabled();
     await saveEvidence(page, "12-nueva-solicitud-legacy.png");
@@ -167,7 +181,15 @@ test.describe("QA visual multiple inputs", () => {
       await expect(page.getByRole("heading", { name: "Nueva solicitud" })).toBeVisible();
     }
 
-    await reporteSelect.selectOption("RPT_TRANSACCIONES_LIMPIAS");
+    await page.locator("#reporteComboboxTrigger").click();
+    await expect(page.locator("#reporteComboboxDropdown")).toBeVisible();
+    await expect(page.locator("#reporteComboboxList")).toContainText("RPT_TRANSACCIONES_LIMPIAS");
+    await page.locator("#reporteComboboxSearch").fill("sin coincidencias xyz");
+    await expect(page.locator("#reporteComboboxList")).toContainText("No se encontraron reportes");
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#reporteComboboxDropdown")).toBeHidden();
+
+    await selectReporteBySearch(page, "transacciones", "RPT_TRANSACCIONES_LIMPIAS");
     await expect(page.locator("#nuevaSolicitudModeBadge")).toContainText(/multi[- ]?input/i);
     await expect(page.locator("#nuevaSolicitudInputsSection")).toBeVisible();
     await expect(page.locator("#ruta_input_select")).toBeDisabled();

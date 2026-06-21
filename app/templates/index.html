@@ -1326,10 +1326,36 @@
 
         <form id="formNueva" class="form-stack">
           <div class="field">
-            <label for="reporte">Reporte</label>
-            <select id="reporte" name="reporte" required>
-              <option value="">Cargando...</option>
-            </select>
+            <label for="reporteComboboxTrigger">Reporte</label>
+            <div id="reporteCombobox" class="searchable-select">
+              <button
+                type="button"
+                id="reporteComboboxTrigger"
+                class="searchable-select__trigger"
+                aria-haspopup="listbox"
+                aria-expanded="false"
+                aria-controls="reporteComboboxDropdown"
+              >
+                <span id="reporteComboboxValue" class="searchable-select__value is-placeholder">Cargando...</span>
+                <span class="searchable-select__chevron" aria-hidden="true">▼</span>
+              </button>
+              <div id="reporteComboboxDropdown" class="searchable-select__dropdown" hidden>
+                <div class="searchable-select__search-wrap">
+                  <input
+                    id="reporteComboboxSearch"
+                    class="searchable-select__search"
+                    type="text"
+                    autocomplete="off"
+                    placeholder="Buscar por código o nombre..."
+                    aria-label="Buscar reporte"
+                  />
+                </div>
+                <div id="reporteComboboxList" class="searchable-select__list" role="listbox" aria-labelledby="reporteComboboxTrigger"></div>
+              </div>
+              <select id="reporte" name="reporte" class="searchable-select__native" required aria-hidden="true" tabindex="-1">
+                <option value="">Cargando...</option>
+              </select>
+            </div>
           </div>
 
           <div class="nueva-solicitud-mode">
