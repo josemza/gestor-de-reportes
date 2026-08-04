@@ -2502,7 +2502,25 @@
     return (nuevaSolicitudState.definitions || []).reduce((acc, inputDef) => {
       const rawValue = getNuevaSolicitudInputValue(inputDef.codigo_input);
       const value = (rawValue || "").trim();
-      if (!value) return acc;
+      const isRequired = Number(inputDef.obligatorio) === 1;
+
+      if (!value) {
+        if (isRequired) return acc;
+
+        if (inputDef.tipo_input === "archivo") {
+          acc.push({
+            codigo_input: inputDef.codigo_input,
+            ruta_archivo: null,
+          });
+          return acc;
+        }
+
+        acc.push({
+          codigo_input: inputDef.codigo_input,
+          valor: null,
+        });
+        return acc;
+      }
 
       if (inputDef.tipo_input === "archivo") {
         acc.push({

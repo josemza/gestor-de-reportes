@@ -7,7 +7,7 @@ import re
 from typing import Any
 from sqlalchemy import select, update, text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from .models import (
     InputCarpetaPermitida,
     Reporte,
@@ -295,10 +295,28 @@ def create_solicitud_multi_input(
 
     for code, item in payload_items.items():
         input_def = active_defs_by_code[code]
+        is_required = input_def.obligatorio == 1
 
         if input_def.tipo_input == "archivo":
             if item.valor is not None:
                 raise ValueError(f"El input {code} usa ruta_archivo y no valor")
+
+            if item.ruta_archivo is None:
+                if is_required:
+                    raise ValueError(f"El input {code} requiere ruta_archivo")
+                rows_to_persist.append(
+                    SolicitudInputValor(
+                        input_def_id=input_def.id,
+                        codigo_input=input_def.codigo_input,
+                        tipo_input=input_def.tipo_input,
+                        valor=None,
+                        ruta_archivo=None,
+                        metadata_json=None,
+                        created_at=now,
+                    )
+                )
+                continue
+
             validated = validate_input_file_path(db, input_def, item.ruta_archivo or "")
             rows_to_persist.append(
                 SolicitudInputValor(
@@ -318,7 +336,20 @@ def create_solicitud_multi_input(
 
         value = (item.valor or "").strip()
         if not value:
-            raise ValueError(f"El input {code} requiere valor")
+            if is_required:
+                raise ValueError(f"El input {code} requiere valor")
+            rows_to_persist.append(
+                SolicitudInputValor(
+                    input_def_id=input_def.id,
+                    codigo_input=input_def.codigo_input,
+                    tipo_input=input_def.tipo_input,
+                    valor=None,
+                    ruta_archivo=None,
+                    metadata_json=None,
+                    created_at=now,
+                )
+            )
+            continue
 
         metadata: dict[str, Any] | None = None
         if input_def.tipo_input == "texto":
@@ -381,6 +412,7 @@ def create_solicitud_multi_input(
 def get_solicitud_input_valores(db: Session, solicitud_id: int) -> list[SolicitudInputValor]:
     query = (
         select(SolicitudInputValor)
+        .options(selectinload(SolicitudInputValor.input_def))
         .where(SolicitudInputValor.solicitud_id == solicitud_id)
         .order_by(SolicitudInputValor.id.asc())
     )

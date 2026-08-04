@@ -55,6 +55,7 @@ def setup_logger() -> logging.Logger:
 
 
 logger = setup_logger()
+MULTI_INPUT_CONTRACT_VERSION = 2
 
 
 def ensure_lock_table():
@@ -134,6 +135,12 @@ def strict_json_loads(raw: str | None, field_name: str) -> dict[str, Any]:
     if not isinstance(val, dict):
         raise RuntimeError(f"{field_name} debe ser un objeto JSON")
     return val
+
+
+def strict_optional_json_loads(raw: str | None, field_name: str) -> dict[str, Any] | None:
+    if raw is None:
+        return None
+    return strict_json_loads(raw, field_name)
 
 
 def detect_request_mode(input_rows: list[SolicitudInputValor]) -> str:
@@ -243,10 +250,12 @@ def build_multi_input_payload_content(
     inputs_payload: dict[str, Any] = {}
 
     for row in input_rows:
-        metadata = strict_json_loads(row.metadata_json, f"metadata_json de {row.codigo_input}")
+        metadata = strict_optional_json_loads(row.metadata_json, f"metadata_json de {row.codigo_input}")
         value = row.ruta_archivo if row.tipo_input == "archivo" else row.valor
+        obligatorio = bool(row.input_def and row.input_def.obligatorio == 1)
         inputs_payload[row.codigo_input] = {
             "tipo": row.tipo_input,
+            "obligatorio": obligatorio,
             "valor": value,
             "ruta_archivo": row.ruta_archivo,
             "metadata": metadata,
@@ -262,6 +271,7 @@ def build_multi_input_payload_content(
         "inputs": inputs_payload,
         "parametros": parametros,
         "metadata": {
+            "contract_version": MULTI_INPUT_CONTRACT_VERSION,
             "ruta_output_base": reporte.ruta_output_base.strip() if reporte.ruta_output_base else None,
             "generated_at_utc": generated_at,
         },
@@ -609,7 +619,7 @@ def process_job(db: Session, job: Solicitud):
         update_progress(db, job.id, 20, "Preparando ejecución...")
         if mode == "multi_input":
             for row in input_rows:
-                if row.tipo_input == "archivo":
+                if row.tipo_input == "archivo" and row.ruta_archivo:
                     _validate_existing_input_file(row.ruta_archivo or "", label=row.codigo_input)
         elif job.ruta_input:
             _validate_existing_input_file(job.ruta_input, label="legacy")
